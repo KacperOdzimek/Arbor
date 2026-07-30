@@ -70,6 +70,14 @@ static inline arb_mat3 arb_mat3_offset(arb_mat3 m, float ox, float oy) {
 }
 
 // ===========================
+// Texture Region
+
+typedef struct arb_uv_2d {
+    float min_x, min_y;
+    float max_x, max_y;
+} arb_uv_2d;
+
+// ===========================
 // Colors
 
 // basic 32 bit color
@@ -77,13 +85,38 @@ typedef struct arb_color {
     unsigned char r, g, b, a;
 } arb_color;
 
-// runtime hex to arb_color conversion
+// Convert single hex char to value at compile time (for arb hex functions)
+#define ARB_HEX_VAL(c) (                            \
+    ((c) >= '0' && (c) <= '9') ? ((c)-'0') :        \
+    ((c) >= 'a' && (c) <= 'f') ? ((c)-'a'+10) :     \
+    ((c) >= 'A' && (c) <= 'F') ? ((c)-'A'+10) : 0   \
+)
+
+// Runtime hex to arb_color conversion
 // letters case does not matter, '#' prefix is required
 // if hex[7] is not '\0', then alpha channel is read, else it is set to FF
 // ARB_HEX <- compile time alternative
-static inline arb_color ARB_HEX(const char* hex);
+static inline arb_color arb_hex(const char *hex) {
+    arb_color result = {
+        (ARB_HEX_VAL(hex[1]) << 4) | ARB_HEX_VAL(hex[2]),
+        (ARB_HEX_VAL(hex[3]) << 4) | ARB_HEX_VAL(hex[4]),
+        (ARB_HEX_VAL(hex[5]) << 4) | ARB_HEX_VAL(hex[6]),
+        0xFF
+    };
 
-// ARB_HEX <- compile time ARB_HEX alternative (definied later in the file)
+    if (hex[7] != '\0' && hex[8] != '\0' && hex[9] == '\0')
+        result.a = (ARB_HEX_VAL(hex[7]) << 4) | ARB_HEX_VAL(hex[8]);
+
+    return result;
+}
+
+// Compile-time arb_color from a "#RRGGBB" or "#RRGGBBAA" string literal.
+#define ARB_HEX(s) (arb_color){                                      \
+    ((ARB_HEX_VAL((s)[1]) << 4) | ARB_HEX_VAL((s)[2])),              \
+    ((ARB_HEX_VAL((s)[3]) << 4) | ARB_HEX_VAL((s)[4])),              \
+    ((ARB_HEX_VAL((s)[5]) << 4) | ARB_HEX_VAL((s)[6])),              \
+    (sizeof(s) > 8 ? ((ARB_HEX_VAL((s)[7]) << 4) | ARB_HEX_VAL((s)[8])) : 0xFF) \
+}
 
 // ===========================
 // Cursor
@@ -344,12 +377,66 @@ extern const arb_type arb_transform_call_type;
 extern const arb_type arb_indirect_type;
 
 // ===========================
+// Requests
+
+typedef struct arb_text_free_request {
+    void*               text_pointer;
+} arb_text_free_request;
+
+typedef struct arb_glyph_request {
+    arb_uv_2d           atlas_position;
+    float               off_x,  off_y;
+    float               size_x, size_y;
+} arb_glyph_request;
+
+typedef struct arb_text_alloc_request {
+    void**              text_pointer_out;
+    size_t              glyphs_count;
+    arb_glyph_request*  glyphs;
+} arb_text_alloc_request;
+
+typedef struct arb_clipbox_request {
+    arb_mat3            transform;
+} arb_clipbox_request;
+
+typedef struct arb_draw_request {
+    arb_mat3            transform;
+    int                 clip_index;
+    short               depth_index;
+    char                is_box_not_text;
+    union {
+        arb_box_data    box_data;
+        void**          text_pointer;
+    };
+} arb_draw_request;
+
+// ===========================
+// Upload Access
+
+typedef struct arb_upload_access {
+    size_t                          text_free_count;
+    const arb_text_free_request*    text_free_requests;
+
+    size_t                          text_alloc_count;
+    const arb_text_alloc_request*   text_alloc_requests;
+
+    size_t                          clipboxes_count;
+    const arb_clipbox_request*      clipboxes_requests;
+
+    size_t                          draws_count;
+    const arb_draw_request*         draws_requests;
+} arb_upload_access;
+
+// ===========================
 // Cache
 
 arb_cache* arb_create_cache();
 void arb_free_cache(arb_cache*);
 
-void arb_update_cache(
+// Function updating UI
+// Returns structure allowing access to cache-owned upload/render lists
+// The pointers will be valid until arb_update_cache is called again
+arb_upload_access arb_update_cache(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -358,41 +445,6 @@ void arb_update_cache(
     float               delta_time
 );
 
-// ===========================
-// Hex to Ui Color Implementations
-
-// convert single hex char to value at compile time
-#define ARB_HEX_VAL(c) ( ((c) >= '0' && (c) <= '9') ? ((c)-'0') :    \
-                        ((c) >= 'a' && (c) <= 'f') ? ((c)-'a'+10) : \
-                        ((c) >= 'A' && (c) <= 'F') ? ((c)-'A'+10) : 0 )
-
-// convert two hex chars to byte at compile time
-#define ARB_HEX_BYTE(c1, c2) ((ARB_HEX_VAL(c1) << 4) | ARB_HEX_VAL(c2))
-
-static inline arb_color arb_hex(const char* hex) {
-    arb_color result;
-    result.r = ARB_HEX_BYTE(hex[1], hex[2]);
-    result.g = ARB_HEX_BYTE(hex[3], hex[4]);
-    result.b = ARB_HEX_BYTE(hex[5], hex[6]);
-
-    // if 8 digits after #, read alpha
-    if (hex[7] != '\0' && hex[8] != '\0') result.a = ARB_HEX_BYTE(hex[7], hex[8]);
-    else result.a = 0xFF;
-
-    return result;
-}
-
-// compile time arb_color from hex builder
-// allows both lower and upper case letters
-// may include alpha (8 hex digits) or not (6 hex digits)
-// '#' prefix required
-#define ARB_HEX(s) (arb_color){ \
-    ARB_HEX_BYTE(s[1], s[2]), \
-    ARB_HEX_BYTE(s[3], s[4]), \
-    ARB_HEX_BYTE(s[5], s[6]), \
-    (sizeof(s) > 8 ? ARB_HEX_BYTE(s[7], s[8]) : 0xFF) \
-}
-
 #endif // ARBOR_USER_INTERFACE_H
 
 #ifdef ARBOR_ARCHITECTURE_IMPL
@@ -400,10 +452,10 @@ static inline arb_color arb_hex(const char* hex) {
 #include <stdlib.h>
 #include <string.h>
 
-// Implementation Notes:
-// 1 - last_frame_used_in_render values reference
-//  last_frame_used_in_render is used to clear hashmap from dead nodes
-/*
+/* 
+    Implementation Notes:
+    1 - last_frame_used_in_render values reference
+        last_frame_used_in_render is used to clear hashmap from dead nodes
     0     - empty cell
     1     - imposible value, to force garbage collection on all
     2     - tombstone
@@ -659,49 +711,51 @@ void stable_sort(void* base, size_t nmemb, size_t size, int (*compar)(const void
 
 typedef struct cache_slot cache_slot;
 typedef struct text_cache_slot text_cache_slot;
-typedef struct draw_request draw_request;
-typedef struct text_request text_request;
-typedef struct clipbox_request clipbox_request;
 typedef struct cursor_input_box cursor_input_box;
 
 struct arb_cache {
     // Passes constants
-    int                 resolution_x;
-    int                 resolution_y;
-    unsigned char       frame_index;
+    int                     resolution_x;
+    int                     resolution_y;
+    unsigned char           frame_index;
 
     // Nodes cache hashmap
-    size_t              cache_capacity;
-    size_t              cache_fill;
-    cache_slot*         cache_slots;
+    size_t                  cache_capacity;
+    size_t                  cache_fill;
+    cache_slot*             cache_slots;
 
     // Text cache hashmap
-    size_t              text_cache_capacity;
-    size_t              text_cache_fill;
-    text_cache_slot*    text_cache_slots;
+    size_t                  text_cache_capacity;
+    size_t                  text_cache_fill;
+    text_cache_slot*        text_cache_slots;
     
-    // Draw requests dynamic array
-    size_t              draw_requests_capacity;
-    size_t              draw_requests_count;
-    draw_request*       draw_requests;
+    // Text free requests dynamic array
+    size_t                  text_free_requests_capacity;
+    size_t                  text_free_requests_count;
+    arb_text_free_request*  text_free_requests;
 
-    // Text requests dynamic array
-    size_t              text_requests_capacity;
-    size_t              text_requests_count;
-    text_request*       text_requests;
+    // Text allocs requests dynamic array
+    size_t                  text_alloc_requests_capacity;
+    size_t                  text_alloc_requests_count;
+    arb_text_alloc_request* text_alloc_requests;
+
+    // Draw requests dynamic array
+    size_t                  draw_requests_capacity;
+    size_t                  draw_requests_count;
+    arb_draw_request*       draw_requests;
 
     // Clipbox requests dynamic array
-    size_t              clipbox_requests_capacity;
-    size_t              clipbox_requests_count;
-    clipbox_request*    clipbox_requests;
+    size_t                  clipbox_requests_capacity;
+    size_t                  clipbox_requests_count;
+    arb_clipbox_request*    clipbox_requests;
 
     // Cursor input boxes dynamic array
-    size_t              cursor_input_boxes_capacity;
-    size_t              cursor_input_boxes_count;
-    cursor_input_box*   cursor_input_boxes;
+    size_t                  cursor_input_boxes_capacity;
+    size_t                  cursor_input_boxes_count;
+    cursor_input_box*       cursor_input_boxes;
 
     // Previous frame cursor state
-    arb_cursor_state    previous_frame_cursor_state;
+    arb_cursor_state        previous_frame_cursor_state;
 };
 
 arb_cache* arb_create_cache() {
@@ -709,7 +763,7 @@ arb_cache* arb_create_cache() {
     return cache;
 }
 
-static void free_cached_text_requests(arb_cache* cache);
+static void free_cached_text_alloc_requests(arb_cache* cache);
 static void text_cache_hashmap_garbage_collect(arb_cache* cache);
 void arb_free_cache(arb_cache* cache) {
     if (!cache) return;
@@ -719,13 +773,14 @@ void arb_free_cache(arb_cache* cache) {
     text_cache_hashmap_garbage_collect(cache);
 
     // Free all cached textes
-    free_cached_text_requests(cache);
+    free_cached_text_alloc_requests(cache);
 
     free(cache->cache_slots);
     free(cache->text_cache_slots);
-    free(cache->draw_requests);
-    free(cache->text_requests);
+    free(cache->text_free_requests);
+    free(cache->text_alloc_requests);
     free(cache->clipbox_requests);
+    free(cache->draw_requests);
     free(cache->cursor_input_boxes);
     free(cache);
 }
@@ -734,8 +789,8 @@ void arb_free_cache(arb_cache* cache) {
 // Cache Hashmaps
 
 typedef struct node_stable_index {
-    const arb_node* node;
-    const void*     instance;
+    const arb_node*         node;
+    const void*             instance;
 } node_stable_index;
 
 typedef struct cache_slot {
@@ -748,10 +803,9 @@ typedef struct cache_slot {
 typedef struct text_cache_slot {
     node_stable_index       key;
     unsigned char           last_frame_used_in_render;
-    dpr_partitioner*        glyphs_partitioner;
-    dpr_partition*          glyphs_partition;
     int                     text_width;
     int                     text_height;
+    void*                   allocation;
 } text_cache_slot;
 
 static uint64_t hash_ptr(const void* p) {
@@ -857,7 +911,7 @@ DEFINE_HASHMAP_FUNCS(
 
 #define HASHMAP_SLOT_INITIALIZER {.key = key}
 #define HASHMAP_SLOT_DESTRUCTOR(slot_ptr) \
-    {if (slot_ptr->glyphs_partitioner) dpr_partitioner_free_partition(slot_ptr->glyphs_partitioner, slot_ptr->glyphs_partition); slot_ptr->glyphs_partition = NULL; }
+    {} // todo request user glyph buffer free
 DEFINE_HASHMAP_FUNCS(
     text_cache, text_cache_slot, text_cache_slots, text_cache_capacity, text_cache_fill
 );
@@ -873,36 +927,18 @@ static inline text_cache_slot* text_cache_get_utill(arb_cache* cache, node_stabl
 }
 
 // ===========================
-// Cache dynamic arrays
+// Cursor Input Box
 
-struct draw_request {
-    arb_mat3                transform;
-    int                     clip_index;
-    short                   depth_index;
-    char                    is_box_not_text;
-    union {
-        arb_box_data        box_data;
-        node_stable_index   text_node;
-    };
-};
-
-struct text_request {
-    node_stable_index       owning_node;
-    size_t                  glyphs_count;
-    struct gpu_glyph*       glyphs;
-};
-
-struct clipbox_request {
-    arb_mat3                transform;
-};
-
-struct cursor_input_box {
+typedef struct cursor_input_box {
     node_stable_index       owner;
     arb_node_cursor_func    handle;
     int                     clip_index;
     short                   depth_index;
     arb_mat3                box_transform;
-};
+} cursor_input_box;
+
+// ===========================
+// Cache dynamic arrays
 
 // Definies one function:
 // void PREFIX##_cache_push (arb_cache* cache, ELEMENT_TYPE element);
@@ -922,26 +958,30 @@ static int PREFIX##_cache_push(arb_cache* cache, ELEMENT_TYPE element) {        
 }
 
 DEFINE_DYNAMIC_ARRAY_FUNCS(
-    draw_request, draw_request, draw_requests, draw_requests_capacity, draw_requests_count
+    text_free_request, arb_text_free_request, text_free_requests, text_free_requests_capacity, text_free_requests_count
 );
 
 DEFINE_DYNAMIC_ARRAY_FUNCS(
-    text_request, text_request, text_requests, text_requests_capacity, text_requests_count
+    text_alloc_request, arb_text_alloc_request, text_alloc_requests, text_alloc_requests_capacity, text_alloc_requests_count
 );
 
 DEFINE_DYNAMIC_ARRAY_FUNCS(
-    clipbox_request, clipbox_request, clipbox_requests, clipbox_requests_capacity, clipbox_requests_count
+    draw_request, arb_draw_request, draw_requests, draw_requests_capacity, draw_requests_count
+);
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    clipbox_request, arb_clipbox_request, clipbox_requests, clipbox_requests_capacity, clipbox_requests_count
 );
 
 DEFINE_DYNAMIC_ARRAY_FUNCS(
     cursor_input_box, cursor_input_box, cursor_input_boxes, cursor_input_boxes_capacity, cursor_input_boxes_count
 );
 
-static inline void free_cached_text_requests(arb_cache* cache) {
-    for (size_t i = 0; i < cache->text_requests_count; i++) {
-        free(cache->text_requests[i].glyphs);
+static inline void free_cached_text_alloc_requests(arb_cache* cache) {
+    for (size_t i = 0; i < cache->text_alloc_requests_count; i++) {
+        free(cache->text_alloc_requests[i].glyphs);
     }
-    cache->text_requests_count = 0;
+    cache->text_alloc_requests_count = 0;
 }
 
 // ===========================
@@ -1291,7 +1331,7 @@ static void render_dfs(
 
     // Push pinkbox request
     if (node->flags & arb_flag_pink_box) {
-        draw_request_cache_push(cache, (draw_request){
+        draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
@@ -1308,7 +1348,7 @@ static void render_dfs(
     // Request box draw
     if (node->type == &arb_box_type){
         const arb_box_data* bdata = data;
-        draw_request_cache_push(cache, (draw_request){
+        draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
@@ -1324,12 +1364,12 @@ static void render_dfs(
         text_cache_slot* text_cache = text_cache_get_utill(cache, index);
         if (text_cache) text_cache->last_frame_used_in_render = cache->frame_index;
 
-        draw_request_cache_push(cache, (draw_request){
+        draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
             .is_box_not_text    = 0,
-            .text_node          = index
+            .text_pointer       = &text_cache->allocation
         });
     }
 
@@ -1378,7 +1418,7 @@ static void render_dfs(
 
     // Clipbox flag
     if (node->flags & arb_flag_clipbox) {
-        new_state.clipbox_index = clipbox_request_cache_push(cache, (clipbox_request){.transform = arb_mat3_pack(transform)});
+        new_state.clipbox_index = clipbox_request_cache_push(cache, (arb_clipbox_request){.transform = transform});
     }
 
     // Default recursion without state changes
@@ -1387,8 +1427,8 @@ static void render_dfs(
 
 // Helper for draw requests depth sorting : deepest first
 static inline int helper_draw_requests_greater_depth(const void* av, const void* bv) {
-    const draw_request* a = (const draw_request*)av; 
-    const draw_request* b = (const draw_request*)bv;
+    const arb_draw_request* a = (const arb_draw_request*)av; 
+    const arb_draw_request* b = (const arb_draw_request*)bv;
     if (a->depth_index > b->depth_index) return 1;
     return 0;
 }
@@ -1401,9 +1441,8 @@ static inline int helper_cursor_input_boxes_greater_depth(const void* av, const 
     return 0;
 }
 
-// Main update function
-// Calls passes
-void arb_update_cache(
+// Main update function, calls passes
+arb_upload_access arb_update_cache(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -1412,12 +1451,13 @@ void arb_update_cache(
     float               delta_time
 ) {
     // Init state
-    cache->resolution_x             = resolution_x;
-    cache->resolution_y             = resolution_y;
-    cache->draw_requests_count      = 0;
-    cache->text_requests_count      = 0;
-    cache->clipbox_requests_count   = 0;
-    cache->cursor_input_boxes_count = 0;
+    cache->resolution_x                 = resolution_x;
+    cache->resolution_y                 = resolution_y;
+    cache->draw_requests_count          = 0;
+    cache->text_free_requests_count     = 0;
+    cache->text_alloc_requests_count    = 0;
+    cache->clipbox_requests_count       = 0;
+    cache->cursor_input_boxes_count     = 0;
 
     // Pick next frame index
     cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_IN_RENDER_FIRST) cache->frame_index = LAST_FRAME_USED_IN_RENDER_FIRST;
@@ -1431,7 +1471,7 @@ void arb_update_cache(
     render_dfs(cache, cache->resolution_x, cache->resolution_y, root, arb_mat3_identity(), &default_subtree_state);
 
     // Sort render requests and input boxes by depth
-    stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(draw_request),      helper_draw_requests_greater_depth);
+    stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(arb_draw_request),      helper_draw_requests_greater_depth);
     stable_sort(cache->cursor_input_boxes,  cache->cursor_input_boxes_count, sizeof(cursor_input_box),  helper_cursor_input_boxes_greater_depth);
 
     // Find out normalized cursor position
@@ -1468,6 +1508,21 @@ void arb_update_cache(
     // Current state in now previous cursor state
     cache->previous_frame_cursor_state = cursor_state;
 
+    // Prepare upload access
+    arb_upload_access upload_access = {
+        .text_free_count     = cache->text_free_requests_count,
+        .text_free_requests  = cache->text_free_requests,
+
+        .text_alloc_count    = cache->text_alloc_requests_count,
+        .text_alloc_requests = cache->text_alloc_requests,
+
+        .clipboxes_count     = cache->clipbox_requests_count,
+        .clipboxes_requests  = cache->clipbox_requests,
+
+        .draws_count         = cache->draw_requests_count,
+        .draws_requests      = cache->draw_requests,
+    };
+
     // Always relayout
     // Do it after render - then we can trust all nodes have their inserted cache and auxilary slots
     // This is important so hashmap pointers does not get invalidated during passes
@@ -1484,8 +1539,7 @@ void arb_update_cache(
         caches_walk_order walk_order    = {.cache = cache};
         size_t            root_subtree  = 1; // root itself included
         if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL)) {
-            free_caches_walk_order(&walk_order);
-            return;
+            free_caches_walk_order(&walk_order); return upload_access;
         }
         
         // Perform all passes
@@ -1506,13 +1560,40 @@ void arb_update_cache(
         cache_hashmap_garbage_collect(cache);
         text_cache_hashmap_garbage_collect(cache);
     }
+
+    return upload_access;
 }
 
 // ===========================
 // Text layout generation
 
+static inline int utf8_decode(const char* str, size_t itr, uint32_t* codepoint) {
+    str += itr; unsigned char c = (unsigned char)str[0];
+
+    if (c < 0x80) {
+        *codepoint = c;
+        return 1;
+    }
+    else if ((c >> 5) == 0x6) {
+        *codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
+        return 2;
+    }
+    else if ((c >> 4) == 0xE) {
+        *codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+        return 3;
+    }
+    else if ((c >> 3) == 0x1E) {
+        *codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+        return 4;
+    }
+
+    // invalid fallback
+    *codepoint = '?';
+    return 1;
+}
+
 void create_text_request(arb_cache* cache, text_cache_slot* slot) {
-    const arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance);
+    /*const arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance);
     dfont_font* font; if (!arb_injection_query_font(tdata->font, &font)) return;
     const char* text = tdata->text;
 
@@ -1520,7 +1601,7 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
     // Sent empty text request
     if (!text || !font) {
         text_request req = {
-            .owning_node  = slot->key,
+            .text_data    = *tdata,
             .glyphs_count = 0,
             .glyphs       = NULL,
         };
@@ -1531,15 +1612,15 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
     // Count glyphs to allocate
     size_t glyph_count = 0; size_t extra_lines_count = 0;
     for (size_t i = 0; text[i] != '\0';) {
-        uint32_t cp; i += dfont_utf8_decode(text, i, &cp);
+        uint32_t cp; i += utf8_decode(text, i, &cp);
         if (cp != '\n') glyph_count++; 
         else extra_lines_count++;
     }
 
     // Allocate glyphs buffer
-    gpu_glyph* glyphs = glyph_count ? malloc(sizeof(gpu_glyph) * glyph_count) : NULL;
+    glyph_request* glyphs = glyph_count ? malloc(sizeof(glyph_request) * glyph_count) : NULL;
     if (glyph_count && !glyphs) {
-        text_request req = { .owning_node = slot->key, .glyphs_count = 0, .glyphs = NULL };
+        text_request req = { .text_data = *tdata, .glyphs_count = 0, .glyphs = NULL };
         text_request_cache_push(cache, req); return;
     }
 
@@ -1576,7 +1657,7 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
 
         // Write glyph
         const dfont_glyph g = dfont_get_glyph(font, cp);
-        glyphs[glyph_idx++] = (gpu_glyph){
+        glyphs[glyph_idx++] = (glyph_request){
             .atlas_position = g.atlas_position,
             .off_x          = pen_x + g.bearing_x * font_scale,
             .off_y          = (extra_lines_count * line_height + pen_y) - g.bearing_y * font_scale,
@@ -1601,11 +1682,11 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
 
     // Request text upload
     text_request req = {
-        .owning_node  = slot->key,
+        .text_data    = *tdata,
         .glyphs_count = glyph_count,
         .glyphs       = glyphs,
     };
-    text_request_cache_push(cache, req);
+    text_request_cache_push(cache, req);*/
 }
 
 #endif // ARBOR_ARCHITECTURE_IMPL
