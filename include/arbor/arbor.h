@@ -324,6 +324,7 @@ extern const arb_type arb_box_type;
 typedef struct arb_box_data {
     arb_color       tint;       // box color
     const char*     image;      // image name/path, may be NULL
+    float           rounding;   // pixel corner rounding radius
     uint32_t        shader;     // shader effect index
 } arb_box_data;
 
