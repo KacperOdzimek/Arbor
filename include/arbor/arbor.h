@@ -1485,24 +1485,6 @@ arb_upload_access arb_update_cache(
     // Current state in now previous cursor state
     cache->previous_frame_cursor_state = cursor_state;
 
-    // Prepare upload access
-    arb_upload_access upload_access = {
-        .resolution_x        = cache->resolution_x,
-        .resolution_y        = cache->resolution_y,
-
-        .text_free_count     = cache->text_free_requests_count,
-        .text_free_requests  = cache->text_free_requests,
-
-        .text_alloc_count    = cache->text_alloc_requests_count,
-        .text_alloc_requests = cache->text_alloc_requests,
-
-        .clipboxes_count     = cache->clipbox_requests_count,
-        .clipboxes_requests  = cache->clipbox_requests,
-
-        .draws_count         = cache->draw_requests_count,
-        .draws_requests      = cache->draw_requests,
-    };
-
     // Always relayout
     // Do it after render - then we can trust all nodes have their inserted cache and auxilary slots
     // This is important so hashmap pointers does not get invalidated during passes
@@ -1519,7 +1501,7 @@ arb_upload_access arb_update_cache(
         caches_walk_order walk_order    = {.cache = cache};
         size_t            root_subtree  = 1; // root itself included
         if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL)) {
-            free_caches_walk_order(&walk_order); return upload_access;
+            free_caches_walk_order(&walk_order); goto _return;
         }
         
         // Perform all passes
@@ -1541,7 +1523,24 @@ arb_upload_access arb_update_cache(
         text_cache_hashmap_garbage_collect(cache);
     }
 
-    return upload_access;
+_return:
+    // Return upload access
+    return (arb_upload_access){
+        .resolution_x        = cache->resolution_x,
+        .resolution_y        = cache->resolution_y,
+
+        .text_free_count     = cache->text_free_requests_count,
+        .text_free_requests  = cache->text_free_requests,
+
+        .text_alloc_count    = cache->text_alloc_requests_count,
+        .text_alloc_requests = cache->text_alloc_requests,
+
+        .clipboxes_count     = cache->clipbox_requests_count,
+        .clipboxes_requests  = cache->clipbox_requests,
+
+        .draws_count         = cache->draw_requests_count,
+        .draws_requests      = cache->draw_requests,
+    };
 }
 
 // ===========================
