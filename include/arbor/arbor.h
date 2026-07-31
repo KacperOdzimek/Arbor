@@ -947,31 +947,6 @@ static inline void free_cached_text_alloc_requests(arb_cache* cache) {
 // ===========================
 // Text layout generation
 
-static inline int utf8_decode(const char* str, size_t itr, uint32_t* codepoint) {
-    str += itr; unsigned char c = (unsigned char)str[0];
-
-    if (c < 0x80) {
-        *codepoint = c;
-        return 1;
-    }
-    else if ((c >> 5) == 0x6) {
-        *codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
-        return 2;
-    }
-    else if ((c >> 4) == 0xE) {
-        *codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
-        return 3;
-    }
-    else if ((c >> 3) == 0x1E) {
-        *codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
-        return 4;
-    }
-
-    // invalid fallback
-    *codepoint = '?';
-    return 1;
-}
-
 void create_text_request(arb_cache* cache, text_cache_slot* slot) {
     if (slot->allocation) { // Request client to free outdated allocation
         text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
