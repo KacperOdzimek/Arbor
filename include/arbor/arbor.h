@@ -72,14 +72,6 @@ static inline arb_mat3x2 arb_mat3x2_offset(arb_mat3x2 m, float ox, float oy) {
 }
 
 // ===========================
-// Texture Region
-
-typedef struct arb_uv_2d {
-    float min_x, min_y;
-    float max_x, max_y;
-} arb_uv_2d;
-
-// ===========================
 // Colors
 
 // basic 32 bit color
