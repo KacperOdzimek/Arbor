@@ -339,7 +339,6 @@ typedef struct arb_text_data {
     uint32_t        shader;     // shader effect index
 } arb_text_data;
 
-
 // ===========================
 // Layout Node Types
 
@@ -469,27 +468,22 @@ typedef struct arb_scrollbox_data {
     int             last_content_offset;
 } arb_scrollbox_data;
 
+
 // ===========================
 // Requests
 
 typedef struct arb_text_free_request {
-    void*               text_pointer;
+    void*   text_pointer;
 } arb_text_free_request;
 
-typedef struct arb_glyph_request {
-    arb_uv_2d           atlas_position;
-    float               off_x,  off_y;
-    float               size_x, size_y;
-} arb_glyph_request;
-
 typedef struct arb_text_alloc_request {
-    void**              text_pointer_out;
-    size_t              glyphs_count;
-    arb_glyph_request*  glyphs;
+    void**  text_pointer_out;
+    size_t  glyphs_count;
+    void*   glyphs;
 } arb_text_alloc_request;
 
 typedef struct arb_clipbox_request {
-    arb_mat3x2          transform;
+    arb_mat3x2  transform;
 } arb_clipbox_request;
 
 typedef struct arb_draw_request {
@@ -529,9 +523,26 @@ typedef struct arb_upload_access {
 } arb_upload_access;
 
 // ===========================
+// Text Layout
+
+typedef void(arb_text_layout_func_signature)(
+    const arb_text_data*    text_data,          // Text data to layout
+    int                     width_constrain,    // Given width, 0 == unlimited width
+    size_t*                 out_count,          // Out count of glyphs
+    void**                  out_glyphs,         // Glyphs malloc'ated array, shall be NULL if count == 0
+    int*                    out_width,          // Out pixel width of text box
+    int*                    out_height          // Out pixel height of text box
+);
+typedef arb_text_layout_func_signature* arb_text_layout_func;
+
+// ===========================
 // Cache
 
-arb_cache* arb_create_cache();
+typedef struct arb_cache_create_info {
+    arb_text_layout_func text_layout_func;      // Func to layout text, may be NULL for no text
+} arb_cache_create_info;
+
+arb_cache* arb_create_cache(const arb_cache_create_info* info);
 void arb_free_cache(arb_cache*);
 
 // Function updating UI
@@ -658,6 +669,9 @@ typedef struct text_cache_slot text_cache_slot;
 typedef struct cursor_input_box cursor_input_box;
 
 struct arb_cache {
+    // Config
+    arb_text_layout_func    text_layout_func;
+
     // Passes constants
     int                     resolution_x;
     int                     resolution_y;
@@ -702,8 +716,9 @@ struct arb_cache {
     arb_cursor_state        previous_frame_cursor_state;
 };
 
-arb_cache* arb_create_cache() {
+arb_cache* arb_create_cache(const arb_cache_create_info* info) {
     arb_cache* cache = calloc(1, sizeof(arb_cache));
+    if (!cache) return NULL; cache->text_layout_func = info->text_layout_func;
     return cache;
 }
 
@@ -930,6 +945,56 @@ static inline void free_cached_text_alloc_requests(arb_cache* cache) {
 }
 
 // ===========================
+// Text layout generation
+
+static inline int utf8_decode(const char* str, size_t itr, uint32_t* codepoint) {
+    str += itr; unsigned char c = (unsigned char)str[0];
+
+    if (c < 0x80) {
+        *codepoint = c;
+        return 1;
+    }
+    else if ((c >> 5) == 0x6) {
+        *codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
+        return 2;
+    }
+    else if ((c >> 4) == 0xE) {
+        *codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+        return 3;
+    }
+    else if ((c >> 3) == 0x1E) {
+        *codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+        return 4;
+    }
+
+    // invalid fallback
+    *codepoint = '?';
+    return 1;
+}
+
+void create_text_request(arb_cache* cache, text_cache_slot* slot) {
+    if (slot->allocation) { // Request client to free outdated allocation
+        text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
+    }
+
+    if (!cache->text_layout_func) return; // No text func
+    arb_text_alloc_request alloc_req = {0};
+    alloc_req.text_pointer_out = &slot->allocation;
+    
+    arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance);
+    cache->text_layout_func(
+        tdata, 0, &alloc_req.glyphs_count, &alloc_req.glyphs, &slot->text_width, &slot->text_height
+    );
+
+    if (alloc_req.glyphs_count && alloc_req.glyphs) {
+        text_alloc_request_cache_push(cache, alloc_req);
+    }
+    else {
+        slot->text_width = 0; slot->text_height = 0;
+    }
+}
+
+// ===========================
 // Cache Update
 
 // Invalidation Node Gate
@@ -1114,8 +1179,6 @@ void PREFIX##_dfs(                                                              
 // Layout passes
 // Travels tree, call functions as specified in type comments
 // to calcualate what specfied in type comments
-
-void create_text_request(arb_cache* cache, text_cache_slot* slot);
 
 // Text generate pass
 void text_gen_dfs(
@@ -1512,135 +1575,6 @@ arb_upload_access arb_update_cache(
     }
 
     return upload_access;
-}
-
-// ===========================
-// Text layout generation
-
-static inline int utf8_decode(const char* str, size_t itr, uint32_t* codepoint) {
-    str += itr; unsigned char c = (unsigned char)str[0];
-
-    if (c < 0x80) {
-        *codepoint = c;
-        return 1;
-    }
-    else if ((c >> 5) == 0x6) {
-        *codepoint = ((c & 0x1F) << 6) | (str[1] & 0x3F);
-        return 2;
-    }
-    else if ((c >> 4) == 0xE) {
-        *codepoint = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
-        return 3;
-    }
-    else if ((c >> 3) == 0x1E) {
-        *codepoint = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) | ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
-        return 4;
-    }
-
-    // invalid fallback
-    *codepoint = '?';
-    return 1;
-}
-
-void create_text_request(arb_cache* cache, text_cache_slot* slot) {
-    if (slot->allocation) { // Request client to free outdated allocation
-        text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
-    }
-
-    /*const arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance);
-    dfont_font* font; if (!arb_injection_query_font(tdata->font, &font)) return;
-    const char* text = tdata->text;
-
-    // If text empty or font invalid
-    // Sent empty text request
-    if (!text || !font) {
-        text_request req = {
-            .text_data    = *tdata,
-            .glyphs_count = 0,
-            .glyphs       = NULL,
-        };
-        text_request_cache_push(cache, req);
-        return; // overwrite current text buffer with empty text
-    }
-
-    // Count glyphs to allocate
-    size_t glyph_count = 0; size_t extra_lines_count = 0;
-    for (size_t i = 0; text[i] != '\0';) {
-        uint32_t cp; i += utf8_decode(text, i, &cp);
-        if (cp != '\n') glyph_count++; 
-        else extra_lines_count++;
-    }
-
-    // Allocate glyphs buffer
-    glyph_request* glyphs = glyph_count ? malloc(sizeof(glyph_request) * glyph_count) : NULL;
-    if (glyph_count && !glyphs) {
-        text_request req = { .text_data = *tdata, .glyphs_count = 0, .glyphs = NULL };
-        text_request_cache_push(cache, req); return;
-    }
-
-    // Find font scale
-    const float font_scale = tdata->size / dfont_get_base_size(font);
-
-    // Populate glyphs buffer
-    const float ascent      = dfont_get_base_ascent(font)   * font_scale;
-    const float descent     = dfont_get_base_descent(font)  * font_scale;
-    const float line_gap    = dfont_get_base_line_gap(font) * font_scale;
-    const float line_height = ascent - descent + line_gap;
-
-    float    pen_x      = 0.0f;
-    float    pen_y      = 0.0f;
-    float    text_width = 0.0f; // max line width across all lines
-    size_t   glyph_idx  = 0;
-    uint32_t prev_cp    = 0;    // for kerning; 0 = no previous glyph
-
-    for (size_t itr = 0; text[itr] != '\0';) {
-        uint32_t cp;
-        itr += dfont_utf8_decode(text, itr, &cp);
-
-        // Handle newline
-        if (cp == '\n') {
-            if (pen_x > text_width) text_width = pen_x;
-            pen_x   = 0.0f;
-            pen_y  -= line_height;
-            prev_cp = 0; // reset kerning across lines
-            continue;
-        }
-
-        // Kerning between consecutive glyphs on the same line
-        if (prev_cp) pen_x += dfont_get_kerning(font, prev_cp, cp);
-
-        // Write glyph
-        const dfont_glyph g = dfont_get_glyph(font, cp);
-        glyphs[glyph_idx++] = (glyph_request){
-            .atlas_position = g.atlas_position,
-            .off_x          = pen_x + g.bearing_x * font_scale,
-            .off_y          = (extra_lines_count * line_height + pen_y) - g.bearing_y * font_scale,
-            .size_x         = g.size_x * font_scale,
-            .size_y         = g.size_y * font_scale,
-        };
-
-        // Advance
-        pen_x  += g.advance_x * font_scale;
-        prev_cp = cp;
-    }
-
-    // Account for final line (no trailing newline)
-    if (pen_x > text_width) text_width = pen_x;
-
-    // Total pixel height: baseline of last line + full single-line cap height
-    float text_height = -pen_y + ascent;
-
-    // Store text dimensions
-    slot->text_width  = text_width;
-    slot->text_height = text_height;
-
-    // Request text upload
-    text_request req = {
-        .text_data    = *tdata,
-        .glyphs_count = glyph_count,
-        .glyphs       = glyphs,
-    };
-    text_request_cache_push(cache, req);*/
 }
 
 // ===========================
@@ -2495,7 +2429,6 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 
 // ===========================
 // Horizontal Scrollbox
-
 
 static const float scroll_speed_horizontal = 3500;
 
