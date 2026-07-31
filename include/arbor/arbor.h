@@ -219,6 +219,7 @@ typedef struct arb_type {
 } arb_type;
 
 typedef enum arb_flag {
+    arb_flag_none               = 0,
     arb_flag_instanced_data     = 1 << 0,   // This node data  = instance + data_offset
     arb_flag_instanced_child    = 1 << 1,   // This node child = instance + child_offset
     arb_flag_ignore_min_width   = 1 << 2,   // Min width  of this node is set to 0
@@ -243,9 +244,6 @@ typedef struct arb_node {
         size_t  data_offset;
     };
 } arb_node;
-
-// Sentinel value to mark array end
-#define ARB_ARRAY_END (arb_node){.type = NULL, .child = NULL, .data = NULL}
 
 // ===========================
 // Predefinied Functions
@@ -460,6 +458,44 @@ typedef struct arb_scrollbox_data {
     int             last_content_offset;
 } arb_scrollbox_data;
 
+// ===========================
+// Node Shortcuts
+
+// Shortcut node creation: type, flags, data, child
+#define ARB_NODE(argtype, argflags, argchild, ...) (arb_node){ \
+    .type  = (&argtype),    \
+    .flags = (argflags),    \
+    .child = (argchild),    \
+    .data  = (__VA_ARGS__)  \
+}
+
+// Uniform padding (0, max_value, flex 1) node
+#define ARB_PADD(max_value, argchild)  (arb_node){   \
+    .type  = &arb_padding_type,                     \
+    .data  = &(arb_padding_data){                   \
+        .top    = (arb_length){0, max_value, 1},    \
+        .bottom = (arb_length){0, max_value, 1},    \
+        .left   = (arb_length){0, max_value, 1},    \
+        .right  = (arb_length){0, max_value, 1},    \
+    },                                              \
+    .child = (argchild)                             \
+}
+
+// Indirect node shortcut
+#define ARB_IDIR(argchild) (arb_node){  \
+    .type   = &arb_indirect_type,       \
+    .child  = (argchild)                \
+}
+
+// Instance node shortcut, child, data
+#define ARB_INST(argchild, ...) (arb_node){     \
+    .type   = &arb_instance_type,               \
+    .child  = (argchild),                       \
+    .data   = (__VA_ARGS__)                     \
+}
+
+// Sentinel value to mark array end
+#define ARB_ARRAY_END (arb_node){.type = NULL, .child = NULL, .data = NULL}
 
 // ===========================
 // Requests
