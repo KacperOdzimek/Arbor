@@ -474,6 +474,12 @@ typedef struct arb_scrollbox_data {
     },                                              \
 }
 
+// Inline array with single node termianted with ARB_LAST
+#define ARB_SINGLE(argtype, argflags, ...) (arb_node[]){    \
+    ARB_NODE(argtype, argflags, __VA_ARGS__),               \
+    ARB_LAST                                                \
+}
+
 // Indirect node shortcut
 #define ARB_IDIR(argchild) (arb_node){  \
     .type   = &arb_indirect_type,       \
