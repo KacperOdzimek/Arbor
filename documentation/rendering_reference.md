@@ -2,7 +2,7 @@
 
 ## Transforms
 
-UI elements dimensions are described using ``arb_mat3x2`` type. This type represents homogenous coordiantes transform matrix 3x3 with cut lower row, as it is always [0, 0, 1]. This type can be direcly uploaded to GPU as it matches GLSL ``mat3x2`` ABI.
+UI elements dimensions are described using ``arb_mat3x2`` type. This type represents homogenous coordiantes transform matrix 3x3 with cut lower row, as it is always [0, 0, 1]. This type can be directly uploaded to GPU as it matches GLSL ``mat3x2`` ABI.
 
 Indentity matrix:
 ```
@@ -11,6 +11,7 @@ Indentity matrix:
 [cut]
 ```
 Represents box spanning entire screen. Smaller UI elements transforms, are derived from this, in sequence of translations and scale operations.
+Adding to vertical offset (matrix 3rd columnd, 2nd row), moves data up - therefore coordinate system is Y+.
 
 ## Cache
 
@@ -40,6 +41,7 @@ arb_upload_access arb_update_cache(
 
 Root being top of UI tree.
 Returned ``arb_upload_access`` contains pointers to arbor render lists owned by cache - do not free, but can be read.
+Important! Pointers inside ``arb_upload_access`` are valid until next update_cache!
 
 ## Upload Access
 
@@ -86,7 +88,7 @@ void arb_injection_text_layout(
 );
 ```
 
-Arbor expects user to return a mallocated array of layed text glyphs. User can define glyphs to suit their own rendering system. An example glyph structure:
+Arbor expects user to return a malloc-allocated array of laid out text glyphs. User can define glyphs to suit their own rendering system. An example glyph structure:
 
 ```c
 typedef struct gpu_glyph {
@@ -111,7 +113,7 @@ typedef struct arb_text_alloc_request {
 } arb_text_alloc_request;
 ```
 
-Glyphs is a array earlier retuned by ``arb_injection_text_layout`` - so it is in familar format.
+Glyphs is a array earlier returned by ``arb_injection_text_layout`` - so it is in familar format.
 The ``text_pointer_out`` is pointer to ``void*`` variable inside cache, designated to store a renderer side handle for this text allocation.
 
 So when we receive such request we do:
@@ -137,7 +139,7 @@ typedef struct arb_text_free_request {
     void*   text_pointer;
 } arb_text_free_request;
 ```
-This text_pointer is the same renderer emited when handling ``arb_text_alloc_request``.
+This text_pointer is the same renderer emitted when handling ``arb_text_alloc_request``.
 Now renderer can free buffer or partition, created back then:
 ```c
 for req in access.text_free_requests:
@@ -155,7 +157,7 @@ typedef struct arb_clipbox_request {
     arb_mat3x2  transform;  // Clipbox transform
 } arb_clipbox_request;
 ```
-Clipboxes may be stored in one SSBO - it is convinient as, draw requests index clipboxes via index [0, clipboxes count).
+Clipboxes may be stored in one SSBO - it is convenient as, draw requests index clipboxes via index [0, clipboxes count).
 
 ## Draw Items
 
@@ -177,7 +179,10 @@ typedef struct arb_draw_request {
 } arb_draw_request;
 ```
 
-Such structure describe a single draw call. If draw call is text draw call (``req.is_box_not_text`` == 0),  then ``req.text.pointer`` is same variable as when text was allocated by ``arb_text_alloc_request``. Therefore we can get our buffer/partition handle again and render our text.
+Such structure describe a single draw call. 
+Draw calls are ordered by depth, from deepest to the one on top.
+
+If draw call is text draw call (``req.is_box_not_text`` == 0), then ``req.text.pointer`` is same variable as when text was allocated by ``arb_text_alloc_request``. Therefore we can get our buffer/partition handle again and render our text.
 
 ## Rendering In Single Draw Call
 
@@ -227,7 +232,13 @@ Then fragment shader:
 - Check interpolated fragment position is in clipbox, else discard
 - Color and return
 
-## Example Renderer Implementation
+## Extra Notes
 
-Single draw call renderer using foundation/graphics.h RHI can be find here:
+### Depth
 
+Decreasing depth means going 'into' the screen.
+Depth index on draw requests can be ignored as those are already sorted by depth, from smallest (deepest) to greatest (in front).
+
+### Clipboxing
+
+Clipbox shall be handled in pixel/fragment shader to precisely clip for example, scrollbox contents - just discarding vertices wont work.
