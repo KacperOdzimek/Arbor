@@ -3,5 +3,9 @@
 !.gitignore
 !.gitattributes
 
+!README.md
+!LICENSE.md
+
 !include/
 !include/**
+
