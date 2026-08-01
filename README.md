@@ -21,7 +21,7 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 
 ## Documentation
 
-| Documentation | Knowledge |
+| Document | Knowledge |
 | --- | --- |
 | [User Reference](documentation/design_reference.md) | Learn how to use Arbor to define your application UI.  |
 | [Rendering Reference](documentation/rendering_reference.md)| Learn how to render Arbor with your renderer. |
