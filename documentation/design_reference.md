@@ -149,7 +149,7 @@ Nodes can be definied as an C struct:
 Writing long ui like that would be tedious, therefore shortcut macros are definied:
 
 ```c
-// Shortcut node creation: type, flags, data, child
+// Shortcut node creation: type, flags, data
 #define ARB_NODE(argtype, argflags, ...) (arb_node){ \
     .type  = (&argtype),    \
     .flags = (argflags),    \
@@ -179,7 +179,7 @@ Writing long ui like that would be tedious, therefore shortcut macros are defini
     .data   = (void*)(argchild)         \
 }
 
-// Instance node shortcut, child, data
+// Instance node shortcut, data
 #define ARB_INST(...) (arb_node){       \
     .type   = &arb_instance_type,       \
     .data   = (__VA_ARGS__)             \
@@ -354,3 +354,89 @@ typedef struct arb_sizebox_data {
 } arb_sizebox_data;
 ```
 
+## Instancing
+
+Instancing mechanism allows defining a UI prefabs, parametrised by instance data. Example:
+
+```c
+
+typedef struct inventory_slot_data {
+    arb_box_data slot_content;
+} inventory_slot_data;
+
+arb_node inventory_slot[] = {
+    ARB_NODE(arb_sizebox_type, arb_flag_none, &(arb_sizebox_data){
+        .flag   = arb_sizebox_overwrite_all,
+        .width  = (arb_length){80, 80, 1},
+        .height = (arb_length){80, 80, 1},
+    }),
+    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
+        .tint = ARB_HEX("#909390"), .rounding = 8
+    }),
+    ARB_PADD(4),
+    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 
+        offsetof(inventory_slot_data, slot_content) // Pull box data from inventory slot data
+    ),
+    ARB_LAST
+};
+
+arb_node inventory_row[] = {
+    ARB_NODE(arb_row_type, arb_flag_none, &(arb_row_data){
+        .vertical_align = 0.5, .spacing = (arb_length){0, 20, 1}}
+    ),
+    ARB_ELEM(
+        ARB_INST(&(inventory_slot_data){
+            .slot_content.image = "apple.png",
+            .slot_content.tint = ARB_HEX("#FF0000")
+        }),
+        ARB_IDIR(inventory_slot)
+    ),
+    ARB_ELEM(
+        ARB_INST(&(inventory_slot_data){
+            .slot_content.image = "sword.png",
+            .slot_content.tint = ARB_HEX("#00FF00")
+        }),
+        ARB_IDIR(inventory_slot)
+    ),
+    ARB_ELEM(
+        ARB_INST(&(inventory_slot_data){
+            .slot_content.image = "pickaxe.png",
+            .slot_content.tint = ARB_HEX("#0000FF")
+        }),
+        ARB_IDIR(inventory_slot)
+    ),
+    ARB_LAST
+};
+```
+
+In this example we can see ``inventory_slot`` being parametrised structure - it's last box pulls it's style from ``inventory slot data``.
+This feature is enabled by ``arb_flag_instanced_data`` flag and works with every node type. The data of a instanced node must be set to offset of read member within instance structure. The instance structure is set for subtree by ``arb_instance_node`` or by ``ARB_INST`` shortcut macro.
+
+Worth noting: instance nodes can also be instanced - therefore instance of it's subtree would be higher instance + offset in lower instance.
+This may be usefull when defining for example structure like that:
+
+```c
+typedef struct inventory_slot_data {
+    arb_box_data        slot_contents;
+} inventory_slot_data;
+
+typedef struct inventory_row_data {
+    arb_text_data       row_title;
+    inventory_slot_data slots[8];
+} inventory_row_data;
+```
+
+Then row structure would read ``inventory_row_data`` and frame particular slot data for children slot.
+
+Instancing mechanism also allows injection children to structure as, ``arb_indirect_type`` can be instanced:
+
+```c
+typedef struct scrollbox_data {
+    arb_node* scrolled_child;
+} scrollbox_data;
+
+// Somewhere in instanced with scrollbox_data scrollbox structure
+ARB_NODE(
+    arb_indirect_type, arb_flag_instanced_data, offsetof(scrollbox_data, scrolled_child)
+)
+```

@@ -453,7 +453,7 @@ typedef struct arb_scrollbox_data {
 // ===========================
 // Node Shortcuts
 
-// Shortcut node creation: type, flags, data, child
+// Shortcut node creation: type, flags, data
 #define ARB_NODE(argtype, argflags, ...) (arb_node){ \
     .type  = (&argtype),    \
     .flags = (argflags),    \
@@ -483,7 +483,7 @@ typedef struct arb_scrollbox_data {
     .data   = (void*)(argchild)         \
 }
 
-// Instance node shortcut, child, data
+// Instance node shortcut, data
 #define ARB_INST(...) (arb_node){       \
     .type   = &arb_instance_type,       \
     .data   = (__VA_ARGS__)             \
