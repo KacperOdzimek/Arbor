@@ -168,7 +168,7 @@ typedef struct arb_type {
     // Structure
 
     // Whether child pointer in node means single node
-    // Or and array terminated with ARB_ARRAY_END
+    // Or and array terminated with ARB_LAST
     int array_child;
 
     // Layout Stages
@@ -221,23 +221,17 @@ typedef struct arb_type {
 typedef enum arb_flag {
     arb_flag_none               = 0,
     arb_flag_instanced_data     = 1 << 0,   // This node data  = instance + data_offset
-    arb_flag_instanced_child    = 1 << 1,   // This node child = instance + child_offset
-    arb_flag_ignore_min_width   = 1 << 2,   // Min width  of this node is set to 0
-    arb_flag_ignore_min_height  = 1 << 3,   // Min height of this node is set to 0
-    arb_flag_ignore_max_width   = 1 << 4,   // Max width  of this node is set to inf
-    arb_flag_ignore_max_height  = 1 << 5,   // Max height of this node is set to inf
-    arb_flag_clipbox            = 1 << 6,   // Children of this node on render are clipped to this node boundary
-    arb_flag_pink_box           = 1 << 7,   // Render pink box in node boundary - for debugging
+    arb_flag_ignore_min_width   = 1 << 1,   // Min width  of this node is set to 0
+    arb_flag_ignore_min_height  = 1 << 2,   // Min height of this node is set to 0
+    arb_flag_ignore_max_width   = 1 << 3,   // Max width  of this node is set to inf
+    arb_flag_ignore_max_height  = 1 << 4,   // Max height of this node is set to inf
+    arb_flag_clipbox            = 1 << 5,   // Children of this node on render are clipped to this node boundary
+    arb_flag_pink_box           = 1 << 6,   // Render pink box in node boundary - for debugging
 } arb_flag;
 
 typedef struct arb_node {
     const arb_type* type;
     const uint32_t  flags;
-    
-    union {
-        const arb_node* child;
-        size_t          child_offset;
-    };
 
     union {
         void*   data;
@@ -462,15 +456,14 @@ typedef struct arb_scrollbox_data {
 // Node Shortcuts
 
 // Shortcut node creation: type, flags, data, child
-#define ARB_NODE(argtype, argflags, argchild, ...) (arb_node){ \
+#define ARB_NODE(argtype, argflags, ...) (arb_node){ \
     .type  = (&argtype),    \
     .flags = (argflags),    \
-    .child = (argchild),    \
     .data  = (__VA_ARGS__)  \
 }
 
 // Uniform padding (0, max_value, flex 1) node
-#define ARB_PADD(max_value, argchild)  (arb_node){   \
+#define ARB_PADD(max_value)  (arb_node){   \
     .type  = &arb_padding_type,                     \
     .data  = &(arb_padding_data){                   \
         .top    = (arb_length){0, max_value, 1},    \
@@ -478,24 +471,30 @@ typedef struct arb_scrollbox_data {
         .left   = (arb_length){0, max_value, 1},    \
         .right  = (arb_length){0, max_value, 1},    \
     },                                              \
-    .child = (argchild)                             \
 }
 
 // Indirect node shortcut
 #define ARB_IDIR(argchild) (arb_node){  \
     .type   = &arb_indirect_type,       \
-    .child  = (argchild)                \
+    .data   = (void*)(argchild)         \
 }
 
 // Instance node shortcut, child, data
-#define ARB_INST(argchild, ...) (arb_node){     \
-    .type   = &arb_instance_type,               \
-    .child  = (argchild),                       \
-    .data   = (__VA_ARGS__)                     \
+#define ARB_INST(...) (arb_node){       \
+    .type   = &arb_instance_type,       \
+    .data   = (__VA_ARGS__)             \
+}
+
+// Local indirect to inlined array
+#define ARB_ELEM(...) (arb_node){   \
+    .type   = &arb_indirect_type,   \
+    .data   = (arb_node[]){         \
+        __VA_ARGS__                 \
+    }                               \
 }
 
 // Sentinel value to mark array end
-#define ARB_ARRAY_END (arb_node){.type = NULL, .child = NULL, .data = NULL}
+#define ARB_LAST (arb_node){.type = NULL, .data = NULL}
 
 // ===========================
 // Requests
@@ -651,8 +650,17 @@ static inline void* get_node_data(const arb_node* node, const char* instance) {
 }
 
 static inline const arb_node* get_node_child(const arb_node* node, const char* instance) {
-    if (node->flags & arb_flag_instanced_child) return *(const arb_node**)(instance + node->child_offset);
-    return node->child;
+    const arb_button_data* bd = (const arb_button_data*)instance;
+
+    if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
+        if (node->flags & arb_flag_instanced_data) return *(const arb_node**)(instance + node->data_offset);
+        else return node->data;
+    }
+
+    // By default next child is next in memory
+    const arb_node* next = (node + 1);
+    if (next->type == NULL) return NULL;
+    return next;
 }
 
 // ===========================
@@ -1103,7 +1111,7 @@ int caches_walk_dfs(
         cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){child, instance});
         scc &= caches_walk_order_push(walk_order, child_slot); count++;
     }
-    else if (child) for (const arb_node* cc = child; cc->type != NULL; cc++) {
+    else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
         cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){cc, instance});
         scc &= caches_walk_order_push(walk_order, child_slot); count++;
     }
@@ -2193,26 +2201,28 @@ static void button_cursor_func(void* node_data, arb_node_cursor_input* node_inpu
 const arb_node arb_button_structure[] = {
     {   // Set handle to button func
         .type   = &arb_cursor_handle_type,
-        .data   = button_cursor_func,
-        .child  = &arb_button_structure[1]
+        .data   = button_cursor_func
     },
     {   // Do logic
         .type   = &arb_cursor_call_type,
         .flags  = arb_flag_instanced_data,
-        .child  = &arb_button_structure[2],
         .data_offset = 0,   // Instance itself
     },
     {   // Box, style = hitbox auxilary current style
         .type   = &arb_box_type,
-        .flags  = arb_flag_instanced_data | arb_flag_instanced_child | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset  = offsetof(arb_button_data, current_style),
-        .child_offset = offsetof(arb_button_data, child)
+        .flags  = arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        .data_offset  = offsetof(arb_button_data, current_style)
+    },
+    {   // Jump to child
+        .type  = &arb_indirect_type,
+        .flags = arb_flag_instanced_data,
+        .data_offset = offsetof(arb_button_data, child)
     }
 };
 
 // ===========================
 // Vertical Scrollbox
-
+/*
 static const float scroll_speed_vertical = 2500;
 
 static void vertical_scrollbox_scroll_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
@@ -2426,7 +2436,7 @@ const arb_node arb_vertical_scrollbox_structure[] = {
         .type  = &arb_indirect_type,
         .child = vertical_scrollbox_handle,
     },
-    ARB_ARRAY_END
+    ARB_LAST
 };
 
 // ===========================
@@ -2645,7 +2655,7 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
         .type  = &arb_indirect_type,
         .child = horizontal_scrollbox_handle,
     },
-    ARB_ARRAY_END
+    ARB_LAST
 };
-
+*/
 #endif // ARBOR_IMPL
