@@ -440,3 +440,23 @@ ARB_NODE(
     arb_indirect_type, arb_flag_instanced_data, offsetof(scrollbox_data, scrolled_child)
 )
 ```
+
+## Custom Types
+
+Arbor enables user to create custom node types. Node type is accessed by node via pointer, so it can be definied in header as extern:
+```c
+extern const arb_type custom_type;
+```
+
+In implementation:
+```c
+const arb_type custom_type = {
+    // set fields definied in header
+};
+```
+
+Arbor.h definied type contents and functions - this is long definition, not worth coping here.
+Importants notes:
+- Node type does not have to declare all functions - each of them can be left NUll - if so, no function will be called.
+- Layout steps shall use only information avaible at this step, eg width distribute shall only use given width, and children measured widths, no height, those preinitalised reads are undefinied
+- type->array_child switch whether node is single childed or array childed, as definied above in this document
