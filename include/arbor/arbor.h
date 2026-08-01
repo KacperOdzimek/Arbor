@@ -292,12 +292,17 @@ typedef struct arb_invalidation_data {
     arb_invalidation_flag flag_always;
 } arb_invalidation_data;
 
+// Indirect type
+// This type data points to it's single child (may be NULL)
+// Can be used with instancing
+extern const arb_type arb_indirect_type;
+
 // ===========================
 // Rendering Node Types
 
 // Adds node depth offset
 // Decreasing depth means going 'into' the screen
-// Data is arb_depth_data, ingle childed
+// Data is arb_depth_data, single childed
 extern const arb_type arb_depth_type;
 typedef struct arb_depth_data {
     short depth_change;
@@ -401,14 +406,6 @@ extern const arb_type arb_transform_handle_type;
 // Cursor input type
 // Creates an transform box, which will call arb_node_render_func provided by parent handle type
 extern const arb_type arb_transform_call_type;
-
-// ===========================
-// Miscellaneous Node Types
-
-// Indirect type
-// This type does not change any state nor render anything
-// Simply jumps to it's single child, usefull with arrays
-extern const arb_type arb_indirect_type;
 
 // ===========================
 // Predefinied Structures
