@@ -167,8 +167,9 @@ typedef arb_node_cursor_func_signature* arb_node_cursor_func;
 typedef struct arb_type {
     // Structure
 
-    // Whether child pointer in node means single node
-    // Or and array terminated with ARB_LAST
+    // If false, next node in memory will be treated as a single nested child
+    // If true, after the node, a sequence of indirect nodes is expected
+    // each of them pointing to a container child. See ARB_ELEM helper.
     int array_child;
 
     // Layout Stages
@@ -1308,8 +1309,8 @@ static inline void render_dfs_recurse(
         render_dfs(cache, own_width, own_height, child, transform, state);
     }
     // multiple children
-    else if (child) for (const arb_node* current_child = child; current_child->type != NULL; current_child++) {
-        render_dfs(cache, own_width, own_height, current_child, transform, state);
+    else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
+        render_dfs(cache, own_width, own_height, cc, transform, state);
     }
 }
 
