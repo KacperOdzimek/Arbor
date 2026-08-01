@@ -1,7 +1,7 @@
 /*
 ----------------------------------------------------------------
 Contents:
-This file implements arb ui system.
+This file implements arbor ui system.
 
 ----------------------------------------------------------------
 Code info:
