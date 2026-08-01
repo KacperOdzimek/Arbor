@@ -22,6 +22,19 @@ Usage: See dedicated documentation
 #include <stddef.h>
 
 // ===========================
+// Implementation Injections - User define those functions
+
+typedef struct arb_text_data arb_text_data;
+void arb_injection_text_layout(
+    const arb_text_data*    text_data,          // Text data to layout
+    int                     width_constrain,    // Given width, 0 == unlimited width
+    size_t*                 out_count,          // Out count of glyphs
+    void**                  out_glyphs,         // Glyphs malloc'ated array, shall be NULL if count == 0
+    int*                    out_width,          // Out pixel width of text box
+    int*                    out_height          // Out pixel height of text box
+);
+
+// ===========================
 // Forwards
 
 typedef struct arb_type   arb_type;
@@ -504,31 +517,31 @@ typedef struct arb_scrollbox_data {
 // Requests
 
 typedef struct arb_text_free_request {
-    void*   text_pointer;
+    void*       text_pointer;       // Renderer emitted pointer at text_alloc_request
 } arb_text_free_request;
 
 typedef struct arb_text_alloc_request {
-    void**  text_pointer_out;
-    size_t  glyphs_count;
-    void*   glyphs;
+    void**      text_pointer_out;   // Storage variable for text handle
+    size_t      glyphs_count;       // Text layout injection emitted glyphs count
+    void*       glyphs;             // Text layout injection emitted glyphs
 } arb_text_alloc_request;
 
 typedef struct arb_clipbox_request {
-    arb_mat3x2  transform;
+    arb_mat3x2  transform;          // Clipbox transform
 } arb_clipbox_request;
 
 typedef struct arb_draw_request {
-    arb_mat3x2          transform;
-    int                 clip_index;
-    short               depth_index;
-    char                is_box_not_text;
+    arb_mat3x2  transform;          // Drawn box transform
+    int         clip_index;         // Clip index from clipboxes requests, -1 means no clip
+    short       depth_index;        // Depth index
+    char        is_box_not_text;    // Whether to read union.box or union.text
     union {
         struct {
-            arb_box_data    data;
+            arb_box_data    data;   // Rendered box data
         } box;
         struct {
-            void**          pointer;
-            arb_text_data   data;
+            void**          pointer;// Text renderer-handle storage variable pointer
+            arb_text_data   data;   // Rendered text data
         } text;
     };
 } arb_draw_request;
@@ -554,26 +567,9 @@ typedef struct arb_upload_access {
 } arb_upload_access;
 
 // ===========================
-// Text Layout
-
-typedef void(arb_text_layout_func_signature)(
-    const arb_text_data*    text_data,          // Text data to layout
-    int                     width_constrain,    // Given width, 0 == unlimited width
-    size_t*                 out_count,          // Out count of glyphs
-    void**                  out_glyphs,         // Glyphs malloc'ated array, shall be NULL if count == 0
-    int*                    out_width,          // Out pixel width of text box
-    int*                    out_height          // Out pixel height of text box
-);
-typedef arb_text_layout_func_signature* arb_text_layout_func;
-
-// ===========================
 // Cache
 
-typedef struct arb_cache_create_info {
-    arb_text_layout_func text_layout_func;      // Func to layout text, may be NULL for no text
-} arb_cache_create_info;
-
-arb_cache* arb_create_cache(const arb_cache_create_info* info);
+arb_cache* arb_create_cache();
 void arb_free_cache(arb_cache*);
 
 // Function updating UI
@@ -709,9 +705,6 @@ typedef struct text_cache_slot text_cache_slot;
 typedef struct cursor_input_box cursor_input_box;
 
 struct arb_cache {
-    // Config
-    arb_text_layout_func    text_layout_func;
-
     // Passes constants
     int                     resolution_x;
     int                     resolution_y;
@@ -756,10 +749,8 @@ struct arb_cache {
     arb_cursor_state        previous_frame_cursor_state;
 };
 
-arb_cache* arb_create_cache(const arb_cache_create_info* info) {
-    arb_cache* cache = calloc(1, sizeof(arb_cache));
-    if (!cache) return NULL; cache->text_layout_func = info->text_layout_func;
-    return cache;
+arb_cache* arb_create_cache() {
+    return calloc(1, sizeof(arb_cache));
 }
 
 static void free_cached_text_alloc_requests(arb_cache* cache);
@@ -992,12 +983,11 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
         text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
     }
 
-    if (!cache->text_layout_func) return; // No text func
     arb_text_alloc_request alloc_req = {0};
     alloc_req.text_pointer_out = &slot->allocation;
     
     arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance);
-    cache->text_layout_func(
+    arb_injection_text_layout(
         tdata, 0, &alloc_req.glyphs_count, &alloc_req.glyphs, &slot->text_width, &slot->text_height
     );
 
