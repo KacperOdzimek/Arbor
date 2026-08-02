@@ -396,6 +396,14 @@ typedef struct arb_sizebox_data {
     arb_length                  height;    
 } arb_sizebox_data;
 
+// Align type
+// Aligns content in position pass
+extern const arb_type arb_aling_type;
+typedef struct arb_align_data {
+    float vertical_align;   // 0 - align top,  0.5 - align center, 1.0 - align bottom, other values also work 
+    float horizontal_align; // 0 - align left,  0.5 - align center, 1.0 - align right, other values also work
+} arb_align_data;
+
 // ===========================
 // Cursor Node Types
 // Those can be used to add input, without writing a new node type
@@ -1762,6 +1770,35 @@ const arb_type arb_transform_call_type = box_behavior_type;
 // ===========================
 // Indirect Type
 const arb_type arb_indirect_type = box_behavior_type;
+
+// ===========================
+// Align type
+
+void align_position(
+    void*                   node_data,          // node data
+    arb_node_layout_state*  node_state,         // node own state
+    size_t                  children_count,     // node children count
+    arb_node_layout_state** children_states     // node children states
+) {
+    arb_align_data* data = node_data;
+
+    // Position children in horizontal axis
+    for (size_t i = 0; i < children_count; ++i) {
+        arb_node_layout_state* child = children_states[i];
+        child->hori_offset = (node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
+    }
+
+    // Position children in vertial axis
+    for (size_t i = 0; i < children_count; ++i) {
+        arb_node_layout_state* child = children_states[i];
+        child->vert_offset = (node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
+    }
+}
+
+const arb_type arb_aling_type = {
+    ARB_TYPE_OVERLAY_INIT,
+    .position = align_position
+};
 
 // ===========================
 // Padding Type
