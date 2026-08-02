@@ -25,7 +25,7 @@ void arb_free_cache(arb_cache*);
 This cache can be updated via:
 
 ```c
-arb_upload_access arb_update_cache(
+arb_upload_access arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -37,7 +37,7 @@ arb_upload_access arb_update_cache(
 
 Root being top of UI tree.
 Returned ``arb_upload_access`` contains pointers to arbor render lists owned by cache - do not free, but can be read.
-Important! Pointers inside ``arb_upload_access`` are valid until next update_cache!
+Important! Pointers inside ``arb_upload_access`` are valid until next cache_update!
 
 ## Upload Access
 

@@ -574,8 +574,8 @@ void arb_free_cache(arb_cache*);
 
 // Function updating UI
 // Returns structure allowing access to cache-owned upload/render lists
-// The pointers will be valid until arb_update_cache is called again
-arb_upload_access arb_update_cache(
+// The pointers will be valid until arb_cache_update is called again
+arb_upload_access arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -587,7 +587,7 @@ arb_upload_access arb_update_cache(
 // Can be called before free cache
 // To get free text requests, if user
 // is willing to clean the glyphs buffer
-arb_upload_access arb_free_all_text(
+arb_upload_access arb_cache_free_all_text(
     arb_cache*          cache
 );
 
@@ -597,6 +597,7 @@ arb_upload_access arb_free_all_text(
 
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>
 
 /* 
     Implementation Notes:
@@ -714,6 +715,10 @@ struct arb_cache {
     int                     resolution_x;
     int                     resolution_y;
     unsigned char           frame_index;
+
+    // Emergency jump to update function
+    // Return with non-zero to opt-out
+    jmp_buf                 emergency;
 
     // Nodes cache hashmap
     size_t                  cache_capacity;
@@ -833,7 +838,9 @@ static void PREFIX##_hashmap_grow(arb_cache* cache) {                           
 \
     size_t new_cap = old_cap ? old_cap * 2 : 64;                                \
 \
-    cache->SLOTS_FIELD = calloc(new_cap, sizeof(*cache->SLOTS_FIELD));          \
+    void* new_alloc = calloc(new_cap, sizeof(*cache->SLOTS_FIELD));             \
+    if (!new_alloc) longjmp(cache->emergency, 123);                             \
+    cache->SLOTS_FIELD = new_alloc;                                             \
     cache->CAP_FIELD   = new_cap;                                               \
     cache->FILL_FIELD  = 0;                                                     \
 \
@@ -1462,7 +1469,7 @@ static inline int helper_cursor_input_boxes_greater_depth(const void* av, const 
 }
 
 // Main update function, calls passes
-arb_upload_access arb_update_cache(
+arb_upload_access arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -1479,6 +1486,10 @@ arb_upload_access arb_update_cache(
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
     cache->cursor_input_boxes_count     = 0;
+
+    if (setjmp(cache->emergency) != 0) {
+        return (arb_upload_access){0};
+    }
 
     // Pick next frame index
     cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_IN_RENDER_FIRST) cache->frame_index = LAST_FRAME_USED_IN_RENDER_FIRST;
@@ -1587,7 +1598,7 @@ _return:
     };
 }
 
-arb_upload_access arb_free_all_text(
+arb_upload_access arb_cache_free_all_text(
     arb_cache*          cache
 ) {
     // Free all cached texts by using impossible value
