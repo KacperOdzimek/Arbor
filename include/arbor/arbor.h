@@ -458,8 +458,8 @@ typedef struct arb_scrollbox_data {
     int             position;
     arb_box_data    current_handle_style;
     int             handle_drag;
-    int             display_height;
-    int             content_height;
+    int             display_pixels;
+    int             content_pixels;
     int             last_content_offset;
 } arb_scrollbox_data;
 
@@ -584,6 +584,13 @@ arb_upload_access arb_update_cache(
     float               delta_time
 );
 
+// Can be called before free cache
+// To get free text requests, if user
+// is willing to clean the glyphs buffer
+arb_upload_access arb_free_all_text(
+    arb_cache*          cache
+);
+
 #endif // ARBOR_H
 
 #ifdef ARBOR_IMPL
@@ -650,8 +657,6 @@ static inline void* get_node_data(const arb_node* node, const char* instance) {
 }
 
 static inline const arb_node* get_node_child(const arb_node* node, const char* instance) {
-    const arb_button_data* bd = (const arb_button_data*)instance;
-
     if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
         if (node->flags & arb_flag_instanced_data) return *(const arb_node**)(instance + node->data_offset);
         else return node->data;
@@ -992,7 +997,8 @@ void create_text_request(arb_cache* cache, text_cache_slot* slot) {
     );
 
     if (alloc_req.glyphs_count && alloc_req.glyphs) {
-        text_alloc_request_cache_push(cache, alloc_req);
+        if (text_alloc_request_cache_push(cache, alloc_req) != -1) return;
+        free(alloc_req.glyphs);
     }
     else {
         slot->text_width = 0; slot->text_height = 0;
@@ -1578,6 +1584,20 @@ _return:
 
         .draws_count         = cache->draw_requests_count,
         .draws_requests      = cache->draw_requests,
+    };
+}
+
+arb_upload_access arb_free_all_text(
+    arb_cache*          cache
+) {
+    // Free all cached texts by using impossible value
+    cache->frame_index = LAST_FRAME_USED_IN_RENDER_IMPOSIBLE;
+    text_cache_hashmap_garbage_collect(cache);
+
+    // Return access to text free requests
+    return (arb_upload_access){
+        .text_free_count    = cache->text_free_requests_count,
+        .text_free_requests = cache->text_free_requests
     };
 }
 
@@ -2231,17 +2251,17 @@ static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* trans
     arb_scrollbox_data* data = node_data;
 
     // Calculate offset
-    int offset_to_align = -data->content_height / 2;  // start offseting from align - hardcoded top
+    int offset_to_align = -data->content_pixels / 2;  // start offseting from align - hardcoded top
     int total_offset    = offset_to_align + data->position;
 
     // No scrolling needed
-    if (data->content_height <= data->display_height) {
+    if (data->content_pixels <= data->display_pixels) {
         total_offset  = 0;
         data->position = 0;
     } 
     // Clamp
     else {
-        int max_offset = (data->content_height - data->display_height) / 2;
+        int max_offset = (data->content_pixels - data->display_pixels) / 2;
         if (total_offset >  max_offset) {
             total_offset = max_offset;
             data->position = max_offset - offset_to_align;
@@ -2257,9 +2277,9 @@ static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* trans
     data->last_content_offset = total_offset;
 
     // Calculate handle size
-    float diplayed_portion = data->content_height ? (float)data->display_height / data->content_height : 0.0f;
-    float handle_height    = data->display_height * diplayed_portion;
-    if (handle_height > data->display_height) handle_height = data->display_height;
+    float diplayed_portion = data->content_pixels ? (float)data->display_pixels / data->content_pixels : 0.0f;
+    float handle_height    = data->display_pixels * diplayed_portion;
+    if (handle_height > data->display_pixels) handle_height = data->display_pixels;
 }
 
 void vertical_scrollbox_position(void* node_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states) {
@@ -2269,8 +2289,8 @@ void vertical_scrollbox_position(void* node_data, arb_node_layout_state* node_st
 
     // Probe height
     arb_scrollbox_data* data = node_data;
-    data->display_height = node_state->given_height;
-    data->content_height = node_state->measured_height.max;
+    data->display_pixels = node_state->given_height;
+    data->content_pixels = node_state->measured_height.max;
 }
 
 // Special type to offset content and probe height given and measured
@@ -2283,17 +2303,17 @@ static const arb_type vertical_scrollbox_scroller_type = {
 static void vertical_scrollbox_handle_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
     arb_scrollbox_data* data = node_data;
 
-    if (!data->content_height) {
+    if (!data->content_pixels) {
         *transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle height as a fraction of displayed height
-    float visible_fraction = (float)data->display_height / data->content_height;
+    float visible_fraction = (float)data->display_pixels / data->content_pixels;
     if (visible_fraction > 1.0f) visible_fraction = 1.0f; // clamp
 
     // Find handle height
-    int height = data->display_height * visible_fraction;
-    if (height > data->content_height) height = data->content_height;
+    int height = data->display_pixels * visible_fraction;
+    if (height > data->content_pixels) height = data->content_pixels;
 
     // Position handle
     int handle_offset = 0;
@@ -2302,18 +2322,18 @@ static void vertical_scrollbox_handle_transform_func(void* node_data, arb_mat3x2
     }
     else {
         // Find current lerp alpha of content between ends
-        float begin = (data->content_height - data->display_height) / 2;
+        float begin = (data->content_pixels - data->display_pixels) / 2;
         float end   = -begin;
         float alpha = (data->last_content_offset - begin) / (end -  begin);
 
         // Apply alpha to handle movement
-        begin = -(data->display_height / 2) + (height / 2);
+        begin = -(data->display_pixels / 2) + (height / 2);
         end   = -begin;
         handle_offset = begin + (end - begin) * alpha;
     }
 
     // Find vertical scale
-    float sy = (float)height / data->display_height;
+    float sy = (float)height / data->display_pixels;
 
     // Apply to transform
     *transform = arb_mat3x2_offset(*transform, 0, 2 * (float)handle_offset / resolution_y);
@@ -2335,7 +2355,7 @@ static void vertical_scrollbox_handle_cursor_func(void* node_data, arb_node_curs
         int cursor_y = node_input->mutable_state->position_y;
         if (data->handle_drag != -1) {                         // Was dragged
             int pixels_change = data->handle_drag - cursor_y;  // Calculate pixel movement within handle
-            pixels_change *= (data->content_height / data->display_height); // Calculate pixel movement within content
+            pixels_change *= (data->content_pixels / data->display_pixels); // Calculate pixel movement within content
 
             data->position -= pixels_change;
             data->current_handle_style = data->pressed_style;
@@ -2445,17 +2465,17 @@ static void horizontal_scrollbox_transform_func(void* node_data, arb_mat3x2* tra
     arb_scrollbox_data* data = node_data;
 
     // Calculate offset
-    int offset_to_align = -data->content_height / 2;  // start offseting from align - hardcoded left
+    int offset_to_align = -data->content_pixels / 2;  // start offseting from align - hardcoded left
     int total_offset    = offset_to_align + data->position;
 
     // No scrolling needed
-    if (data->content_height <= data->display_height) {
+    if (data->content_pixels <= data->display_pixels) {
         total_offset  = 0;
         data->position = 0;
     } 
     // Clamp
     else {
-        int max_offset = (data->content_height - data->display_height) / 2;
+        int max_offset = (data->content_pixels - data->display_pixels) / 2;
         if (total_offset >  max_offset) {
             total_offset = max_offset;
             data->position = max_offset - offset_to_align;
@@ -2471,9 +2491,9 @@ static void horizontal_scrollbox_transform_func(void* node_data, arb_mat3x2* tra
     data->last_content_offset = total_offset;
 
     // Calculate handle size
-    float diplayed_portion = data->content_height ? (float)data->display_height / data->content_height : 0.0f;
-    float handle_width     = data->display_height * diplayed_portion;
-    if (handle_width > data->display_height) handle_width = data->display_height;
+    float diplayed_portion = data->content_pixels ? (float)data->display_pixels / data->content_pixels : 0.0f;
+    float handle_width     = data->display_pixels * diplayed_portion;
+    if (handle_width > data->display_pixels) handle_width = data->display_pixels;
 }
 
 void horizontal_scrollbox_position(void* node_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states) {
@@ -2483,8 +2503,8 @@ void horizontal_scrollbox_position(void* node_data, arb_node_layout_state* node_
 
     // Probe width
     arb_scrollbox_data* data = node_data;
-    data->display_height = node_state->given_width;
-    data->content_height = node_state->measured_width.max;
+    data->display_pixels = node_state->given_width;
+    data->content_pixels = node_state->measured_width.max;
 }
 
 // Special type to offset content and probe width given and measured
@@ -2497,17 +2517,17 @@ static const arb_type horizontal_scrollbox_scroller_type = {
 static void horizontal_scrollbox_handle_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
     arb_scrollbox_data* data = node_data;
 
-    if (!data->content_height) {
+    if (!data->content_pixels) {
         *transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle width as a fraction of displayed width
-    float visible_fraction = (float)data->display_height / data->content_height;
+    float visible_fraction = (float)data->display_pixels / data->content_pixels;
     if (visible_fraction > 1.0f) visible_fraction = 1.0f; // clamp
 
     // Find handle width
-    int width = data->display_height * visible_fraction;
-    if (width > data->content_height) width = data->content_height;
+    int width = data->display_pixels * visible_fraction;
+    if (width > data->content_pixels) width = data->content_pixels;
 
     // Position handle
     int handle_offset = 0;
@@ -2516,18 +2536,18 @@ static void horizontal_scrollbox_handle_transform_func(void* node_data, arb_mat3
     }
     else {
         // Find current lerp alpha of content between ends
-        float begin = (data->content_height - data->display_height) / 2;
+        float begin = (data->content_pixels - data->display_pixels) / 2;
         float end   = -begin;
         float alpha = (data->last_content_offset - begin) / (end -  begin);
 
         // Apply alpha to handle movement
-        begin = -(data->display_height / 2) + (width / 2);
+        begin = -(data->display_pixels / 2) + (width / 2);
         end   = -begin;
         handle_offset = begin + (end - begin) * alpha;
     }
 
     // Find horizontal scale
-    float sx = (float)width / data->display_height;
+    float sx = (float)width / data->display_pixels;
 
     // Apply to transform
     *transform = arb_mat3x2_offset(*transform, 2 * (float)handle_offset / resolution_x, 0);
@@ -2549,7 +2569,7 @@ static void horizontal_scrollbox_handle_cursor_func(void* node_data, arb_node_cu
         int cursor_x = node_input->mutable_state->position_x;
         if (data->handle_drag != -1) {                         // Was dragged
             int pixels_change = data->handle_drag - cursor_x;  // Calculate pixel movement within handle
-            pixels_change *= (data->content_height / data->display_height); // Calculate pixel movement within content
+            pixels_change *= (data->content_pixels / data->display_pixels); // Calculate pixel movement within content
 
             data->position += pixels_change;
             data->current_handle_style = data->pressed_style;

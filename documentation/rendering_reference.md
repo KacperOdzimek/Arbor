@@ -18,11 +18,7 @@ Adding to vertical offset (matrix 3rd columnd, 2nd row), moves data up - therefo
 Node layout and measurements are stored inside ``arb_cache``:
 
 ```c
-typedef struct arb_cache_create_info {
-    arb_text_layout_func text_layout_func;      // Func to layout text, may be NULL for no text
-} arb_cache_create_info;
-
-arb_cache* arb_create_cache(const arb_cache_create_info* info);
+arb_cache* arb_create_cache();
 void arb_free_cache(arb_cache*);
 ```
 
