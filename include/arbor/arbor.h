@@ -1487,7 +1487,13 @@ arb_upload_access arb_cache_update(
     cache->clipbox_requests_count       = 0;
     cache->cursor_input_boxes_count     = 0;
 
+    // Walk order for remeasure
+    caches_walk_order walk_order = {.cache = cache};
+
+    // Emergency fallback if some allocation goes wrong
+    // Likely to happen in caches_walk_dfs, therefore freeing walk_order here
     if (setjmp(cache->emergency) != 0) {
+        free_caches_walk_order(&walk_order); goto _return;
         return (arb_upload_access){0};
     }
 
@@ -1553,8 +1559,7 @@ arb_upload_access arb_cache_update(
         root_cache->value_state.given_height = resolution_y;
 
         // Find walk order
-        caches_walk_order walk_order    = {.cache = cache};
-        size_t            root_subtree  = 1; // root itself included
+        size_t root_subtree  = 1; // root itself included
         if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL)) {
             free_caches_walk_order(&walk_order); goto _return;
         }
