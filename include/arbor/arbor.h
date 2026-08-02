@@ -398,6 +398,9 @@ typedef struct arb_sizebox_data {
 
 // Align type
 // Aligns content in position pass
+// Note align is applied inside align node given space
+// Therefore align node shall be used with 
+// arb_flag_ignore_max_width/height, to gain space to align in
 extern const arb_type arb_aling_type;
 typedef struct arb_align_data {
     float vertical_align;   // 0 - align top,  0.5 - align center, 1.0 - align bottom, other values also work 
