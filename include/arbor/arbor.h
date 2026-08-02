@@ -2312,7 +2312,7 @@ static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* trans
 
     // No scrolling needed
     if (data->content_pixels <= data->display_pixels) {
-        total_offset  = 0;
+        total_offset  = (data->content_pixels - data->display_pixels) / 2;
         data->position = 0;
     } 
     // Clamp
@@ -2438,6 +2438,14 @@ static const arb_type vertical_scrollbox_handle_type = {
 };
 
 const arb_node vertical_scrollbox_main_body[] = {
+    {   // Align node
+        .type  = &arb_aling_type,
+        .flags = arb_flag_ignore_max_height,
+        .data  = &(arb_align_data){
+            .horizontal_align = 0,
+            .vertical_align   = 0
+        }
+    },
     {   // Scroller Node
         .type  = &vertical_scrollbox_scroller_type,
         .flags = arb_flag_instanced_data | arb_flag_ignore_min_height,
@@ -2652,6 +2660,14 @@ static const arb_type horizontal_scrollbox_handle_type = {
 };
 
 const arb_node horizontal_scrollbox_main_body[] = {
+    {   // Align node
+        .type  = &arb_aling_type,
+        .flags = arb_flag_ignore_max_width,
+        .data  = &(arb_align_data){
+            .horizontal_align = 0,
+            .vertical_align   = 0
+        }
+    },
     {   // Scroller Node
         .type  = &horizontal_scrollbox_scroller_type,
         .flags = arb_flag_instanced_data | arb_flag_ignore_min_width,
