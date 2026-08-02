@@ -396,6 +396,17 @@ typedef struct arb_sizebox_data {
     arb_length                  height;    
 } arb_sizebox_data;
 
+// Align type
+// Aligns content in position pass
+// Note align is applied inside align node given space
+// Therefore align node shall be used with 
+// arb_flag_ignore_max_width/height, to gain space to align in
+extern const arb_type arb_aling_type;
+typedef struct arb_align_data {
+    float vertical_align;   // 0 - align top,  0.5 - align center, 1.0 - align bottom, other values also work 
+    float horizontal_align; // 0 - align left,  0.5 - align center, 1.0 - align right, other values also work
+} arb_align_data;
+
 // ===========================
 // Cursor Node Types
 // Those can be used to add input, without writing a new node type
@@ -1764,6 +1775,35 @@ const arb_type arb_transform_call_type = box_behavior_type;
 const arb_type arb_indirect_type = box_behavior_type;
 
 // ===========================
+// Align type
+
+void align_position(
+    void*                   node_data,          // node data
+    arb_node_layout_state*  node_state,         // node own state
+    size_t                  children_count,     // node children count
+    arb_node_layout_state** children_states     // node children states
+) {
+    arb_align_data* data = node_data;
+
+    // Position children in horizontal axis
+    for (size_t i = 0; i < children_count; ++i) {
+        arb_node_layout_state* child = children_states[i];
+        child->hori_offset = (node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
+    }
+
+    // Position children in vertial axis
+    for (size_t i = 0; i < children_count; ++i) {
+        arb_node_layout_state* child = children_states[i];
+        child->vert_offset = (node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
+    }
+}
+
+const arb_type arb_aling_type = {
+    ARB_TYPE_OVERLAY_INIT,
+    .position = align_position
+};
+
+// ===========================
 // Padding Type
 
 static inline int padding_distribute_length(
@@ -2272,7 +2312,7 @@ static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* trans
 
     // No scrolling needed
     if (data->content_pixels <= data->display_pixels) {
-        total_offset  = 0;
+        total_offset  = (data->content_pixels - data->display_pixels) / 2;
         data->position = 0;
     } 
     // Clamp
@@ -2398,6 +2438,14 @@ static const arb_type vertical_scrollbox_handle_type = {
 };
 
 const arb_node vertical_scrollbox_main_body[] = {
+    {   // Align node
+        .type  = &arb_aling_type,
+        .flags = arb_flag_ignore_max_height,
+        .data  = &(arb_align_data){
+            .horizontal_align = 0,
+            .vertical_align   = 0
+        }
+    },
     {   // Scroller Node
         .type  = &vertical_scrollbox_scroller_type,
         .flags = arb_flag_instanced_data | arb_flag_ignore_min_height,
@@ -2449,7 +2497,7 @@ const arb_node arb_vertical_scrollbox_structure[] = {
     {   // Row content-handle
         .type  = &arb_row_type,
         .data  = &(arb_row_data){
-            .spacing        = (arb_length){0, 16, 1},
+            .spacing        = (arb_length){16, arb_inf_length, 1},
             .vertical_align = 0.5
         }
     },
@@ -2612,6 +2660,14 @@ static const arb_type horizontal_scrollbox_handle_type = {
 };
 
 const arb_node horizontal_scrollbox_main_body[] = {
+    {   // Align node
+        .type  = &arb_aling_type,
+        .flags = arb_flag_ignore_max_width,
+        .data  = &(arb_align_data){
+            .horizontal_align = 0,
+            .vertical_align   = 0
+        }
+    },
     {   // Scroller Node
         .type  = &horizontal_scrollbox_scroller_type,
         .flags = arb_flag_instanced_data | arb_flag_ignore_min_width,
@@ -2663,7 +2719,7 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
     {   // Column content-handle
         .type  = &arb_column_type,
         .data  = &(arb_column_data){
-            .spacing          = (arb_length){0, 16, 1},
+            .spacing          = (arb_length){16, arb_inf_length, 1},
             .horizontal_align = 0.5
         }
     },
