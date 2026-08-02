@@ -2449,7 +2449,7 @@ const arb_node arb_vertical_scrollbox_structure[] = {
     {   // Row content-handle
         .type  = &arb_row_type,
         .data  = &(arb_row_data){
-            .spacing        = (arb_length){0, 16, 1},
+            .spacing        = (arb_length){16, arb_inf_length, 1},
             .vertical_align = 0.5
         }
     },
@@ -2663,7 +2663,7 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
     {   // Column content-handle
         .type  = &arb_column_type,
         .data  = &(arb_column_data){
-            .spacing          = (arb_length){0, 16, 1},
+            .spacing          = (arb_length){16, arb_inf_length, 1},
             .horizontal_align = 0.5
         }
     },
