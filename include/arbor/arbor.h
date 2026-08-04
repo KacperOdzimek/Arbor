@@ -671,29 +671,6 @@ int is_point_in_transformed_box(arb_mat3x2 t, float px, float py) {
 }
 
 // ===========================
-// Node fields reads
-
-typedef struct storage_cache_slot storage_cache_slot;
-static void* safe_storage_slot_get_allocation(storage_cache_slot* slot);
-static inline void* get_node_data(const arb_node* node, const char* instance, storage_cache_slot* storage) {
-    if (node->flags & arb_flag_instanced_data) return (void*)(instance + node->data_offset);
-    if (node->flags & arb_flag_storaged_data)  return (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
-    return node->data;
-}
-
-static inline const arb_node* get_node_child(const arb_node* node, const char* instance) {
-    if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
-        if (node->flags & arb_flag_instanced_data) return *(const arb_node**)(instance + node->data_offset);
-        else return node->data;
-    }
-
-    // By default next child is next in memory
-    const arb_node* next = (node + 1);
-    if (next->type == NULL) return NULL;
-    return next;
-}
-
-// ===========================
 // Stable sort helper
 
 // currently implemeted as mergesort
@@ -734,6 +711,11 @@ typedef struct cache_slot cache_slot;
 typedef struct text_cache_slot text_cache_slot;
 typedef struct storage_cache_slot storage_cache_slot;
 typedef struct cursor_input_box cursor_input_box;
+
+typedef enum emergency_jump_flag {
+    emergency_jump_flag_grow_occured = 1,
+    emergency_jump_flag_allocation_failure 
+} emergency_jump_flag;
 
 struct arb_cache {
     // Passes constants
@@ -847,10 +829,6 @@ typedef struct storage_cache_slot {
     void*                   allocation;
 } storage_cache_slot;
 
-static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
-    if (slot == NULL) return NULL; return slot->allocation;
-}
-
 static uint64_t hash_ptr(const void* p) {
     uint64_t x = (uint64_t)(uintptr_t)p;
     x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
@@ -866,14 +844,14 @@ static size_t hash_key(node_stable_index key) {
 
 // Definies three functions:
 // void       PREFIX##_hashmap_grow             (arb_cache* cache);
-// SLOT_TYPE* PREFIX##_hashmap_get              (arb_cache* cache, node_stable_index key, int insert_if_none)
+// SLOT_TYPE* PREFIX##_hashmap_get              (arb_cache* cache, node_stable_index key)
 // void       PREFIX##_hashmap_garbage_collect  (arb_cache* cache) 
 // Define HASHMAP_SLOT_INITIALIZER to define default slot value
 // Define HASHMAP_SLOT_DESTRUCTOR(slot ptr) to set garbage collector slot free method
 #define DEFINE_HASHMAP_FUNCS(PREFIX, SLOT_TYPE, SLOTS_FIELD, CAP_FIELD, FILL_FIELD) \
 \
 static SLOT_TYPE* PREFIX##_hashmap_get                                          \
-(arb_cache* cache, node_stable_index key, int insert_if_none);                  \
+(arb_cache* cache, node_stable_index key);                                      \
 \
 static void PREFIX##_hashmap_grow(arb_cache* cache) {                           \
     size_t old_cap = cache->CAP_FIELD;                                          \
@@ -882,7 +860,9 @@ static void PREFIX##_hashmap_grow(arb_cache* cache) {                           
     size_t new_cap = old_cap ? old_cap * 2 : 64;                                \
 \
     void* new_alloc = calloc(new_cap, sizeof(*cache->SLOTS_FIELD));             \
-    if (!new_alloc) longjmp(cache->emergency, 123);                             \
+    if (!new_alloc) longjmp(                                                    \
+        cache->emergency, emergency_jump_flag_allocation_failure                \
+    );                                                                          \
     cache->SLOTS_FIELD = new_alloc;                                             \
     cache->CAP_FIELD   = new_cap;                                               \
     cache->FILL_FIELD  = 0;                                                     \
@@ -891,15 +871,17 @@ static void PREFIX##_hashmap_grow(arb_cache* cache) {                           
         unsigned char time = old_slots[i].last_frame_used_in_render;            \
         if (time == LAST_FRAME_USED_IN_RENDER_EMPTY ||                          \
             time == LAST_FRAME_USED_IN_RENDER_TOMBSTONE) continue;              \
-        SLOT_TYPE* dst = PREFIX##_hashmap_get(cache, old_slots[i].key, 1);      \
+        SLOT_TYPE* dst = PREFIX##_hashmap_get(cache, old_slots[i].key);         \
         *dst = old_slots[i];                                                    \
     }                                                                           \
 \
     free(old_slots);                                                            \
+    longjmp(cache->emergency, emergency_jump_flag_grow_occured);                \
 }                                                                               \
 \
 static SLOT_TYPE* PREFIX##_hashmap_get(                                         \
-    arb_cache* cache, node_stable_index key, int insert_if_none) {              \
+    arb_cache* cache, node_stable_index key                                     \
+) {                                                                             \
     if ((cache->FILL_FIELD + 1) * 10 >= cache->CAP_FIELD * 7) {                 \
         PREFIX##_hashmap_grow(cache);                                           \
     }                                                                           \
@@ -912,7 +894,6 @@ static SLOT_TYPE* PREFIX##_hashmap_get(                                         
         unsigned char time = slot->last_frame_used_in_render;                   \
 \
         if (time == LAST_FRAME_USED_IN_RENDER_EMPTY) {                          \
-            if (!insert_if_none) return NULL;                                   \
             if (tombstone) slot = tombstone;                                    \
             else cache->FILL_FIELD++;                                           \
             *slot = (SLOT_TYPE){.key = key};                                    \
@@ -965,26 +946,48 @@ DEFINE_HASHMAP_FUNCS(text_cache, text_cache_slot, text_cache_slots, text_cache_c
 DEFINE_HASHMAP_FUNCS(storage_cache, storage_cache_slot, storage_cache_slots, storage_cache_capacity, storage_cache_fill);
 #undef HASHMAP_SLOT_DESTRUCTOR
 
-// Gets slot, always inserts, as cache must always exist for node
-static inline cache_slot* cache_get_utill(arb_cache* cache, node_stable_index index) {
-    return cache_hashmap_get(cache, index, 1);
+// ===========================
+// Node fields reads
+
+static void* safe_storage_slot_get_allocation(storage_cache_slot* slot);
+static inline void* get_node_data(const arb_node* node, const char* instance, storage_cache_slot* storage) {
+    if (node->flags & arb_flag_instanced_data) return (void*)(instance + node->data_offset);
+    if (node->flags & arb_flag_storaged_data)  return (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
+    return node->data;
 }
 
-// Gets slot, always inserts, as cache must always exist for node
-static inline text_cache_slot* text_cache_get_utill(arb_cache* cache, node_stable_index index) {
-    return text_cache_hashmap_get(cache, index, 1);
+static inline const arb_node* get_node_child(const arb_node* node, const char* instance, storage_cache_slot* storage) {
+    if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
+        if (node->flags & arb_flag_instanced_data) return *(const arb_node**)(instance + node->data_offset);
+        if (node->flags & arb_flag_storaged_data)  return *(const arb_node**)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
+        else return node->data;
+    }
+
+    // By default next child is next in memory
+    const arb_node* next = (node + 1);
+    if (next->type == NULL) return NULL;
+    return next;
 }
+
+// ===========================
+// Storage Queries
 
 // Gets slot, always inserts, as storage must always exist for node
-static inline storage_cache_slot* storage_cache_get_utill(arb_cache* cache, node_stable_index index, storage_cache_slot* storage) {
-    storage_cache_slot* slot = storage_cache_hashmap_get(cache, index, 1);
+// May cause emergency jump
+static inline storage_cache_slot* storage_cache_hashmap_get_with_alloc(arb_cache* cache, node_stable_index index, storage_cache_slot* storage) {
+    storage_cache_slot* slot = storage_cache_hashmap_get(cache, index);
     uint64_t bytes = (uint64_t)(get_node_data(index.node, index.instance, storage));
     if (slot->bytes != bytes) {
-        slot->allocation = realloc(slot->allocation, bytes);
-        slot->allocation = slot->allocation;
+        void* new_alloc = realloc(slot->allocation, bytes);
+        if (!new_alloc) longjmp(cache->emergency, emergency_jump_flag_allocation_failure);
+        slot->allocation = new_alloc;
         slot->bytes = bytes;
     }
     return slot;
+}
+
+static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
+    if (slot == NULL) return NULL; return slot->allocation;
 }
 
 // ===========================
@@ -1169,7 +1172,7 @@ int caches_walk_dfs(
     storage_cache_slot* storage
 ) {
     const arb_node* node  = current->key.node;
-    const arb_node* child = get_node_child(current->key.node, current->key.instance);
+    const arb_node* child = get_node_child(current->key.node, current->key.instance, storage);
     size_t          count = 0;
     int             scc   = 1;
 
@@ -1180,15 +1183,16 @@ int caches_walk_dfs(
 
     // Load storage slot
     if (node->type == &arb_storage_type) {
-        storage = storage_cache_get_utill(walk_order->cache, current->key, storage);
+        // Get without alloc, as alloc happen in render
+        storage = storage_cache_hashmap_get(walk_order->cache, current->key);
     }
 
     if (!node->type->array_child && child) {
-        cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){child, instance});
+        cache_slot*     child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
         scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
     else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
-        cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){cc, instance});
+        cache_slot*     child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
         scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
 
@@ -1297,7 +1301,7 @@ void text_gen_dfs(
     }
 
     if (current->key.node->type == &arb_text_type) {
-        text_cache_slot* text_cache = text_cache_get_utill(walk_order->cache, current->key);
+        text_cache_slot* text_cache = text_cache_hashmap_get(walk_order->cache, current->key);
         create_text_request(walk_order->cache, storage, text_cache);
         current->value_state.measured_width  = (arb_length){text_cache->text_width,  text_cache->text_width, 1};
         current->value_state.measured_height = (arb_length){text_cache->text_height, text_cache->text_height, 1};
@@ -1385,7 +1389,7 @@ static inline void render_dfs_recurse(
     arb_mat3x2                      transform, 
     const render_dfs_subtree_state* state
 ) {
-    const arb_node* child = get_node_child(own->key.node, own->key.instance);
+    const arb_node* child = get_node_child(own->key.node, own->key.instance, state->storage_slot);
 
     // back node dimensions to avoid reading own slot after visiting child
     int own_width  = own->value_state.given_width;
@@ -1413,7 +1417,7 @@ static void render_dfs(
 
     // get node data
     void*       data = get_node_data(node, state->instance, state->storage_slot);
-    cache_slot* own  = cache_get_utill(cache, index);
+    cache_slot* own  = cache_hashmap_get(cache, index);
 
     // mark used, to avoid garbage collect
     own->last_frame_used_in_render = cache->frame_index;
@@ -1468,7 +1472,7 @@ static void render_dfs(
         const arb_text_data* tdata = data;
 
         // Prevent text garbage collection
-        text_cache_slot* text_cache = text_cache_get_utill(cache, index);
+        text_cache_slot* text_cache = text_cache_hashmap_get(cache, index);
         if (text_cache) text_cache->last_frame_used_in_render = cache->frame_index;
 
         draw_request_cache_push(cache, (arb_draw_request){
@@ -1513,7 +1517,7 @@ static void render_dfs(
     }
     // Update storage for subtree
     if (node->type == &arb_storage_type) {
-        new_state.storage_slot = storage_cache_get_utill(cache, index, state->storage_slot);
+        new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->storage_slot);
         new_state.storage_slot->last_frame_used_in_render = cache->frame_index; // Avoid garbage collection
     }
     // Update depth for subtree
@@ -1564,6 +1568,18 @@ arb_upload_access arb_cache_update(
     arb_cursor_state    cursor_state,
     float               delta_time
 ) {
+    // Walk order for remeasure
+    caches_walk_order walk_order = {.cache = cache};
+
+    // Emergency fallback
+    // May happen when growth in hashmap occurs, invalidating all pointers, then we redo everything
+    // May happen when allocation failed, then we opt-out
+    int setjmp_val = setjmp(cache->emergency);
+    if (setjmp_val == emergency_jump_flag_allocation_failure) {
+        free_caches_walk_order(&walk_order); goto _return;
+        return (arb_upload_access){0};
+    }
+
     // Init state
     free_cached_text_alloc_requests(cache);
     cache->resolution_x                 = resolution_x;
@@ -1573,16 +1589,6 @@ arb_upload_access arb_cache_update(
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
     cache->cursor_input_boxes_count     = 0;
-
-    // Walk order for remeasure
-    caches_walk_order walk_order = {.cache = cache};
-
-    // Emergency fallback if some allocation goes wrong
-    // Likely to happen in caches_walk_dfs, therefore freeing walk_order here
-    if (setjmp(cache->emergency) != 0) {
-        free_caches_walk_order(&walk_order); goto _return;
-        return (arb_upload_access){0};
-    }
 
     // Pick next frame index
     cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_IN_RENDER_FIRST) cache->frame_index = LAST_FRAME_USED_IN_RENDER_FIRST;
@@ -1641,7 +1647,7 @@ arb_upload_access arb_cache_update(
     // This is important so hashmap pointers does not get invalidated during passes
     // This means we are one frame behind with layout, but it is not a big deal actually.
     if (1) {
-        cache_slot* root_cache = cache_get_utill(cache, (node_stable_index){root, NULL});
+        cache_slot* root_cache = cache_hashmap_get(cache, (node_stable_index){root, NULL});
 
         // Give root entire screen
         // Will auto bound to desired at distribute
