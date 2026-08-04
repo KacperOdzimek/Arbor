@@ -451,7 +451,6 @@ extern const arb_node arb_button_structure[];
 typedef void(arb_button_func_signature)(void* payload); 
 typedef arb_button_func_signature* arb_button_func;
 typedef struct arb_button_data {
-    // Config
     void*           payload;
     arb_button_func on_clicked;
     arb_button_func on_released;
@@ -460,10 +459,6 @@ typedef struct arb_button_data {
     arb_box_data    hovered_style;
     arb_box_data    pressed_style;
     const arb_node* child;
-
-    // State
-    arb_box_data    current_style;
-    unsigned char   pressed;
 } arb_button_data;
 
 extern const arb_node arb_vertical_scrollbox_structure[];
@@ -2346,8 +2341,14 @@ const arb_type arb_column_type = {
 // ===========================
 // Button Structure
 
+typedef struct button_storage {
+    int          pressed;
+    arb_box_data current;
+} button_storage;
+
 static void button_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
     arb_button_data* data = node_data;
+    button_storage*  stor = storage_data;
 
     arb_cursor_state crr = *node_input->mutable_state;
     arb_cursor_state prv = *node_input->prev_raw_state;
@@ -2356,30 +2357,34 @@ static void button_cursor_func(void* node_data, void* storage_data, arb_node_cur
     char just_released = !crr.left_down && prv.left_down;
 
     if (just_pressed && node_input->hovered) {  // press started
-        data->pressed = 1;
-        data->current_style = data->pressed_style;
+        stor->pressed = 1;
+        stor->current = data->pressed_style;
         if (data->on_clicked) data->on_clicked(data->payload);
         crr.left_down = 0;
     }
-    else if (crr.left_down && data->pressed) {    // held
-        data->current_style = data->pressed_style;
+    else if (crr.left_down && stor->pressed) {    // held
+        stor->current = data->pressed_style;
         if (data->on_held) data->on_held(data->payload);
         crr.left_down = 0;
     }
-    else if (just_released && data->pressed) {   // released
-        data->pressed = 0;
-        if (node_input->hovered) data->current_style = data->hovered_style;
-        else data->current_style = data->default_style;
+    else if (just_released && stor->pressed) {   // released
+        stor->pressed = 0;
+        if (node_input->hovered) stor->current = data->hovered_style;
+        else stor->current = data->default_style;
         if (data->on_released)  data->on_released(data->payload);
     }
-    else if (node_input->hovered) data->current_style = data->hovered_style;    // hover
-    else data->current_style = data->default_style;  // idle
+    else if (node_input->hovered) stor->current = data->hovered_style;    // hover
+    else stor->current = data->default_style;  // idle
 }
 
 const arb_node arb_button_structure[] = {
+    {   // Create button state storage
+        .type = &arb_storage_type,
+        .data_offset = sizeof(button_storage)
+    },
     {   // Set handle to button func
-        .type   = &arb_cursor_handle_type,
-        .data   = button_cursor_func
+        .type = &arb_cursor_handle_type,
+        .data = button_cursor_func
     },
     {   // Do logic
         .type   = &arb_cursor_call_type,
@@ -2388,8 +2393,8 @@ const arb_node arb_button_structure[] = {
     },
     {   // Box, style = hitbox auxilary current style
         .type   = &arb_box_type,
-        .flags  = arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset  = offsetof(arb_button_data, current_style)
+        .flags  = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        .data_offset  = offsetof(button_storage, current)
     },
     {   // Jump to child
         .type  = &arb_indirect_type,
