@@ -147,33 +147,36 @@ typedef struct arb_node_cursor_input {
 // Node Typedefs
 
 typedef struct arb_node_layout_state {
-    arb_length              measured_width;     // desired width  of this node
-    arb_length              measured_height;    // desired height of this node
-    int                     given_width;        // received width
-    int                     given_height;       // received height
-    int                     hori_offset;        // node center horizontal offset from parent center
-    int                     vert_offset;        // node center vertical offset from parent center
+    arb_length              measured_width;     // Desired width  of this node
+    arb_length              measured_height;    // Desired height of this node
+    int                     given_width;        // Received width
+    int                     given_height;       // Received height
+    int                     hori_offset;        // Node center horizontal offset from parent center
+    int                     vert_offset;        // Node center vertical offset from parent center
 } arb_node_layout_state;
 
 typedef void(arb_node_layout_func_signature)(
-    void*                   node_data,          // node data
-    arb_node_layout_state*  node_state,         // node own state
-    size_t                  children_count,     // node children count
-    arb_node_layout_state** children_states     // node children states
+    void*                   node_data,          // Node data
+    void*                   storage_data,       // Storage data
+    arb_node_layout_state*  node_state,         // Node own state
+    size_t                  children_count,     // Node children count
+    arb_node_layout_state** children_states     // Node children states
 );
 typedef arb_node_layout_func_signature* arb_node_layout_func;
 
 typedef void(arb_node_render_func_signature)(
-    void*                   node_data,          // node data
-    arb_mat3x2*             transform,          // given transform, can be changed
-    int                     resolution_x,       // screen resolution x
-    int                     resolution_y        // screen resolution y
+    void*                   node_data,          // Node data
+    void*                   storage_data,       // Storage data
+    arb_mat3x2*             transform,          // Given transform, can be changed
+    int                     resolution_x,       // Screen resolution x
+    int                     resolution_y        // Screen resolution y
 );
 typedef arb_node_render_func_signature* arb_node_render_func;
 
 typedef void(arb_node_cursor_func_signature)(
-    void*                   node_data,          // node data
-    arb_node_cursor_input*  node_input          // cursor input
+    void*                   node_data,          // Node data
+    void*                   storage_data,       // Storage data
+    arb_node_cursor_input*  node_input          // Cursor input
 );
 typedef arb_node_cursor_func_signature* arb_node_cursor_func;
 
@@ -285,6 +288,12 @@ arb_node_layout_func_signature arb_overlay_position_func;
 // Sets instance pointer to own data value
 // Data shall be arbitrary pointer (or offset in current instance) to instance structure
 extern const arb_type arb_instance_type;
+
+// Storage type
+// Creates an owned storage memory of size uint64(data)
+// This storage pointer will be passed to all children functions
+// May be used to add mutable state to UI elements (eg. button "pressed" state)
+extern const arb_type arb_storage_type;
 
 // Layout-rebuild gate for the subtree - children layout will only
 // be rebuilt if invalidation node was marked with a proper dirty flag
@@ -719,6 +728,7 @@ void stable_sort(void* base, size_t nmemb, size_t size, int (*compar)(const void
 
 typedef struct cache_slot cache_slot;
 typedef struct text_cache_slot text_cache_slot;
+typedef struct storage_cache_slot storage_cache_slot;
 typedef struct cursor_input_box cursor_input_box;
 
 struct arb_cache {
@@ -740,6 +750,11 @@ struct arb_cache {
     size_t                  text_cache_capacity;
     size_t                  text_cache_fill;
     text_cache_slot*        text_cache_slots;
+
+    // Storage cache hashmap
+    size_t                  storage_cache_capacity;
+    size_t                  storage_cache_fill;
+    storage_cache_slot*     storage_cache_slots;
     
     // Text free requests dynamic array
     size_t                  text_free_requests_capacity;
@@ -776,12 +791,14 @@ arb_cache* arb_create_cache() {
 
 static void free_cached_text_alloc_requests(arb_cache* cache);
 static void text_cache_hashmap_garbage_collect(arb_cache* cache);
+static void storage_cache_hashmap_garbage_collect(arb_cache* cache);
 void arb_free_cache(arb_cache* cache) {
     if (!cache) return;
 
-    // Free all cached texts by using impossible value
+    // Free all cached texts and storage by using impossible value
     cache->frame_index = LAST_FRAME_USED_IN_RENDER_IMPOSIBLE;
     text_cache_hashmap_garbage_collect(cache);
+    storage_cache_hashmap_garbage_collect(cache);
 
     // Free all cached textes
     free_cached_text_alloc_requests(cache);
@@ -818,6 +835,17 @@ typedef struct text_cache_slot {
     int                     text_height;
     void*                   allocation;
 } text_cache_slot;
+
+typedef struct storage_cache_slot {
+    node_stable_index       key;
+    unsigned char           last_frame_used_in_render;
+    uint64_t                bytes;
+    void*                   allocation;
+} storage_cache_slot;
+
+static inline void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
+    if (slot == NULL) return NULL; return slot->allocation;
+}
 
 static uint64_t hash_ptr(const void* p) {
     uint64_t x = (uint64_t)(uintptr_t)p;
@@ -883,7 +911,7 @@ static SLOT_TYPE* PREFIX##_hashmap_get(                                         
             if (!insert_if_none) return NULL;                                   \
             if (tombstone) slot = tombstone;                                    \
             else cache->FILL_FIELD++;                                           \
-            *slot = (SLOT_TYPE)HASHMAP_SLOT_INITIALIZER;                        \
+            *slot = (SLOT_TYPE){.key = key};                                    \
             return slot;                                                        \
         }                                                                       \
 \
@@ -913,22 +941,25 @@ static void PREFIX##_hashmap_garbage_collect(arb_cache* cache) {                
     }                                                                           \
 }
 
-#define HASHMAP_SLOT_INITIALIZER {.key = key}
+// Cache slots hashmap
 #define HASHMAP_SLOT_DESTRUCTOR(slot_ptr)
-DEFINE_HASHMAP_FUNCS(
-    cache, cache_slot, cache_slots, cache_capacity, cache_fill
-);
-
-#undef HASHMAP_SLOT_INITIALIZER
+DEFINE_HASHMAP_FUNCS(cache, cache_slot, cache_slots, cache_capacity, cache_fill); 
 #undef HASHMAP_SLOT_DESTRUCTOR
 
+// Text cache slots hashmaps
 static int text_free_request_cache_push(arb_cache*, arb_text_free_request);
-#define HASHMAP_SLOT_INITIALIZER {.key = key}
 #define HASHMAP_SLOT_DESTRUCTOR(slot_ptr) \
     { text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot_ptr->allocation}); } // Request client to free allocation
-DEFINE_HASHMAP_FUNCS(
-    text_cache, text_cache_slot, text_cache_slots, text_cache_capacity, text_cache_fill
-);
+
+DEFINE_HASHMAP_FUNCS(text_cache, text_cache_slot, text_cache_slots, text_cache_capacity, text_cache_fill);
+#undef HASHMAP_SLOT_DESTRUCTOR
+
+// Storage cache slots hashmap
+#define HASHMAP_SLOT_DESTRUCTOR(slot_ptr) \
+    { free(slot_ptr->allocation); }
+
+DEFINE_HASHMAP_FUNCS(storage_cache, storage_cache_slot, storage_cache_slots, storage_cache_capacity, storage_cache_fill);
+#undef HASHMAP_SLOT_DESTRUCTOR
 
 // Gets slot, always inserts, as cache must always exist for node
 static inline cache_slot* cache_get_utill(arb_cache* cache, node_stable_index index) {
@@ -940,12 +971,25 @@ static inline text_cache_slot* text_cache_get_utill(arb_cache* cache, node_stabl
     return text_cache_hashmap_get(cache, index, 1);
 }
 
+// Gets slot, always inserts, as storage must always exist for node
+static inline storage_cache_slot* storage_cache_get_utill(arb_cache* cache, node_stable_index index) {
+    storage_cache_slot* slot = storage_cache_hashmap_get(cache, index, 1);
+    uint64_t bytes = (uint64_t)(get_node_data(index.node, index.instance));
+    if (slot->bytes != bytes) {
+        slot->allocation = realloc(slot->allocation, bytes);
+        slot->allocation = slot->allocation;
+        slot->bytes = bytes;
+    }
+    return slot;
+}
+
 // ===========================
 // Cursor Input Box
 
 typedef struct cursor_input_box {
     node_stable_index       owner;
     arb_node_cursor_func    handle;
+    storage_cache_slot*     storage;
     int                     clip_index;
     short                   depth_index;
     arb_mat3x2              box_transform;
@@ -1064,7 +1108,8 @@ typedef struct caches_walk_order {
     size_t                  capacity;   // in cache_slot pointers
     size_t                  position;   // in cache_slot pointers
     cache_slot**            slots;      // sized capacity, node cache slots in enter order
-    arb_node_layout_state** states;     // sized capacity, node layout states in children oreder
+    storage_cache_slot**    storages;   // sized capacity, node storage slots in enter order
+    arb_node_layout_state** states;     // sized capacity, node layout states in enter order
     size_t*                 subtree;    // sized capacity, node subtree size, including self
 } caches_walk_order;
 
@@ -1078,29 +1123,32 @@ void free_caches_walk_order(caches_walk_order* order) {
 }
 
 // Returns non-zero at success
-static inline int caches_walk_order_push(caches_walk_order* walk_order, cache_slot* slot) {
+static inline int caches_walk_order_push(caches_walk_order* walk_order, cache_slot* slot, storage_cache_slot* storage_slot) {
     if (walk_order->position + 1 > walk_order->capacity) {
         size_t new_cap = walk_order->capacity ? walk_order->capacity * 2 : 64;
     
         cache_slot**            new_slt = realloc(walk_order->slots,    new_cap * sizeof(cache_slot*));
+        storage_cache_slot**    new_sto = realloc(walk_order->storages, new_cap * sizeof(storage_cache_slot*));
         arb_node_layout_state** new_sts = realloc(walk_order->states,   new_cap * sizeof(arb_node_layout_state*));
         size_t*                 new_sub = realloc(walk_order->subtree,  new_cap * sizeof(size_t));
 
-        if (!new_slt || !new_sts || !new_sub) {
-            free(new_slt); free(new_sts); free(new_sub);
+        if (!new_slt || !new_sto || !new_sts || !new_sub) {
+            free(new_slt); free(new_sto); free(new_sts); free(new_sub);
             free_caches_walk_order(walk_order);
             return 0; // failed to realloc -> failed to push -> entire layout fails
         }
 
         walk_order->capacity = new_cap;
         walk_order->slots    = new_slt;
+        walk_order->storages = new_sto;
         walk_order->states   = new_sts;
         walk_order->subtree  = new_sub;
     }
 
-    walk_order->slots   [walk_order->position]  = slot;
-    walk_order->states  [walk_order->position]  = &slot->value_state;
-    walk_order->subtree [walk_order->position]  = 1; // included node itself
+    walk_order->slots   [walk_order->position] = slot;
+    walk_order->storages[walk_order->position] = storage_slot,
+    walk_order->states  [walk_order->position] = &slot->value_state;
+    walk_order->subtree [walk_order->position] = 1; // included node itself
     walk_order->position++;
 
     return 1; // success
@@ -1113,31 +1161,37 @@ int caches_walk_dfs(
     caches_walk_order*  walk_order, 
     cache_slot*         current, 
     size_t*             subtree_size_target, 
-    const void*         instance
+    const void*         instance,
+    storage_cache_slot* storage
 ) {
     const arb_node* node  = current->key.node;
     const arb_node* child = get_node_child(current->key.node, current->key.instance);
     size_t          count = 0;
     int             scc   = 1;
 
-    // change instance for subtree
+    // Change instance for subtree
     if (node->type == &arb_instance_type) {
         instance = get_node_data(current->key.node, instance);
     }
 
+    // Load storage slot
+    if (node->type == &arb_storage_type) {
+        storage = storage_cache_get_utill(walk_order->cache, current->key);
+    }
+
     if (!node->type->array_child && child) {
         cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){child, instance});
-        scc &= caches_walk_order_push(walk_order, child_slot); count++;
+        scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
     else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
         cache_slot*     child_slot = cache_get_utill(walk_order->cache, (node_stable_index){cc, instance});
-        scc &= caches_walk_order_push(walk_order, child_slot); count++;
+        scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
 
     // recurse
     size_t begin_pos = walk_order->position - count;
     for (size_t i = 0; i < count; i++) {
-        scc &= caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance);
+        scc &= caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance, storage);
         *subtree_size_target += walk_order->subtree[begin_pos + i];
     }
 
@@ -1154,23 +1208,26 @@ int caches_walk_dfs(
 void PREFIX##_dfs(                                                                                  \
     caches_walk_order*  walk_order,                                                                 \
     cache_slot*         current,                                                                    \
+    storage_cache_slot* storage,                                                                    \
     size_t              first_child                                                                 \
 ) {                                                                                                 \
-    cache_slot**    children    = &walk_order->slots[first_child];                                  \
-    size_t*         subtrees    = &walk_order->subtree[first_child];                                \
-    void*           data        = get_node_data(current->key.node, current->key.instance);          \
+    cache_slot**         children = &walk_order->slots[first_child];                                \
+    size_t*              subtrees = &walk_order->subtree[first_child];                              \
+    storage_cache_slot** storages = &walk_order->storages[first_child];                             \
+    void*                data     = get_node_data(current->key.node, current->key.instance);        \
 \
     if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
         size_t child_first_child = first_child + current->value_child_count;                        \
         for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], child_first_child);                               \
+            PREFIX##_dfs(walk_order, children[i], storages[i], child_first_child);                  \
             child_first_child += subtrees[i] - 1;                                                   \
         }                                                                                           \
     }                                                                                               \
 \
     arb_node_layout_func func = current->key.node->type->TYPE_FUNC_NAME;                            \
     if (func != NULL) func(                                                                         \
-        data, &current->value_state, current->value_child_count, &walk_order->states[first_child]   \
+        data, safe_storage_slot_get_allocation(storage),                                            \
+        &current->value_state, current->value_child_count, &walk_order->states[first_child]         \
     );                                                                                              \
 \
     __VA_ARGS__                                                                                     \
@@ -1183,23 +1240,26 @@ void PREFIX##_dfs(                                                              
 void PREFIX##_dfs(                                                                                  \
     caches_walk_order*  walk_order,                                                                 \
     cache_slot*         current,                                                                    \
+    storage_cache_slot* storage,                                                                    \
     size_t              first_child                                                                 \
 ) {                                                                                                 \
-    cache_slot**    children    = &walk_order->slots[first_child];                                  \
-    size_t*         subtrees    = &walk_order->subtree[first_child];                                \
-    void*           data        = get_node_data(current->key.node, current->key.instance);          \
+    cache_slot**         children = &walk_order->slots[first_child];                                \
+    size_t*              subtrees = &walk_order->subtree[first_child];                              \
+    storage_cache_slot** storages = &walk_order->storages[first_child];                             \
+    void*                data     = get_node_data(current->key.node, current->key.instance);        \
 \
     __VA_ARGS__                                                                                     \
 \
     arb_node_layout_func func = current->key.node->type->TYPE_FUNC_NAME;                            \
     if (func != NULL) func(                                                                         \
-        data, &current->value_state, current->value_child_count, &walk_order->states[first_child]   \
+        data, safe_storage_slot_get_allocation(storage),                                            \
+        &current->value_state, current->value_child_count, &walk_order->states[first_child]         \
     );                                                                                              \
 \
     if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
         size_t child_first_child = first_child + current->value_child_count;                        \
         for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], child_first_child);                               \
+            PREFIX##_dfs(walk_order, children[i], storages[i], child_first_child);                  \
             child_first_child += subtrees[i] - 1;                                                   \
         }                                                                                           \
     }                                                                                               \
@@ -1298,6 +1358,7 @@ typedef struct render_dfs_subtree_state {
     int                     clipbox_index;
     arb_node_cursor_func    cursor_handle;
     arb_node_render_func    transform_handle;
+    storage_cache_slot*     storage_slot;
 } render_dfs_subtree_state;
 
 static void render_dfs(
@@ -1358,12 +1419,12 @@ static void render_dfs(
 
     // Do transform if method provided
     if (node->type->transform) node->type->transform(
-        data, &transform, cache->resolution_x, cache->resolution_y
+        data, state->storage_slot, &transform, cache->resolution_x, cache->resolution_y
     );
 
-    // Transform
+    // Transform from transform call
     if (node->type == &arb_transform_call_type && state->transform_handle) {
-        state->transform_handle(data, &transform, cache->resolution_x, cache->resolution_y);
+        state->transform_handle(data, state->storage_slot, &transform, cache->resolution_x, cache->resolution_y);
     }
 
     // Push pinkbox request
@@ -1426,6 +1487,7 @@ static void render_dfs(
         cursor_input_box_cache_push(cache, (cursor_input_box){
             .owner          = index,
             .handle         = state->cursor_handle,
+            .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
             .box_transform  = transform
@@ -1439,6 +1501,11 @@ static void render_dfs(
     // Update instance for subtree
     if (node->type == &arb_instance_type) {
         new_state.instance = data;
+    }
+    // Update storage for subtree
+    if (node->type == &arb_storage_type) {
+        new_state.storage_slot = storage_cache_get_utill(cache, index);
+        new_state.storage_slot->last_frame_used_in_render = cache->frame_index; // Avoid garbage collection
     }
     // Update depth for subtree
     else if (node->type == &arb_depth_type) {
@@ -1548,7 +1615,10 @@ arb_upload_access arb_cache_update(
 
         input_data.hovered     = cursor_inside && !ever_was_inside;
         input_data.raw_hovered = cursor_inside;
-        ibox->handle(get_node_data(ibox->owner.node, ibox->owner.instance), &input_data);
+        ibox->handle(
+            get_node_data(ibox->owner.node, ibox->owner.instance), 
+            safe_storage_slot_get_allocation(ibox->storage), &input_data
+        );
 
         ever_was_inside |= cursor_inside;
         if (i == 0) break; // break loop at last element
@@ -1571,17 +1641,17 @@ arb_upload_access arb_cache_update(
 
         // Find walk order
         size_t root_subtree  = 1; // root itself included
-        if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL)) {
+        if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL, NULL)) {
             free_caches_walk_order(&walk_order); goto _return;
         }
         
         // Perform all passes
         text_gen_dfs(&walk_order, root_cache, 0);
-        width_measure_dfs(&walk_order, root_cache, 0);
-        width_distribute_dfs(&walk_order, root_cache, 0);
-        height_measure_dfs(&walk_order, root_cache, 0);
-        height_distribute_dfs(&walk_order, root_cache, 0);
-        position_dfs(&walk_order, root_cache, 0);
+        width_measure_dfs(&walk_order, root_cache, NULL, 0);
+        width_distribute_dfs(&walk_order, root_cache, NULL, 0);
+        height_measure_dfs(&walk_order, root_cache, NULL, 0);
+        height_distribute_dfs(&walk_order, root_cache, NULL, 0);
+        position_dfs(&walk_order, root_cache, NULL, 0);
 
         free_caches_walk_order(&walk_order);
     }
@@ -1592,6 +1662,7 @@ arb_upload_access arb_cache_update(
     if (cache->frame_index % 16 == 0) {
         cache_hashmap_garbage_collect(cache);
         text_cache_hashmap_garbage_collect(cache);
+        storage_cache_hashmap_garbage_collect(cache);
     }
 
 _return:
@@ -1656,11 +1727,12 @@ const arb_type arb_invalidation_type = box_behavior_type;
 
 void arb_overlay_width_measure_func(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
 ) {
-    (void)node_data; arb_length own = {0, 0, 0.0f};
+    (void)node_data; (void)storage_data; arb_length own = {0, 0, 0.0f};
 
     for (size_t i = 0; i < children_count; ++i) {
         arb_length child = children_states[i]->measured_width;
@@ -1674,6 +1746,7 @@ void arb_overlay_width_measure_func(
 
 void arb_overlay_width_distribute_func(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1687,6 +1760,7 @@ void arb_overlay_width_distribute_func(
 
 void arb_overlay_height_measure_func(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1704,6 +1778,7 @@ void arb_overlay_height_measure_func(
 
 void arb_overlay_height_distribute_func(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1715,6 +1790,7 @@ void arb_overlay_height_distribute_func(
 
 void arb_overlay_position_func(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1775,13 +1851,18 @@ const arb_type arb_transform_call_type = box_behavior_type;
 const arb_type arb_indirect_type = box_behavior_type;
 
 // ===========================
+// Storage Type
+const arb_type arb_storage_type = box_behavior_type;
+
+// ===========================
 // Align type
 
 void align_position(
-    void*                   node_data,          // node data
-    arb_node_layout_state*  node_state,         // node own state
-    size_t                  children_count,     // node children count
-    arb_node_layout_state** children_states     // node children states
+    void*                   node_data,
+    void*                   storage_data,
+    arb_node_layout_state*  node_state,
+    size_t                  children_count,
+    arb_node_layout_state** children_states
 ) {
     arb_align_data* data = node_data;
 
@@ -1832,6 +1913,7 @@ static inline int padding_distribute_length(
 
 void padding_width_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1857,6 +1939,7 @@ void padding_width_measure(
 
 void padding_width_distribute(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1885,6 +1968,7 @@ void padding_width_distribute(
 
 void padding_height_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1908,6 +1992,7 @@ void padding_height_measure(
 
 void padding_height_distribute(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -1949,12 +2034,13 @@ const arb_type arb_padding_type = {
 
 void sizebox_width_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
 ) {
     const arb_sizebox_data* data = node_data;
-    arb_overlay_width_measure_func(node_data, node_state, children_count, children_states);
+    arb_overlay_width_measure_func(node_data, storage_data, node_state, children_count, children_states);
     if (data->flag & arb_sizebox_overwrite_width_min)   node_state->measured_width.min   = data->width.min;
     if (data->flag & arb_sizebox_overwrite_width_max)   node_state->measured_width.max   = data->width.max;
     if (data->flag & arb_sizebox_overwrite_width_flex)  node_state->measured_width.flex  = data->width.flex;
@@ -1962,12 +2048,13 @@ void sizebox_width_measure(
 
 void sizebox_height_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
 ) {
     const arb_sizebox_data* data = node_data;
-    arb_overlay_height_measure_func(node_data, node_state, children_count, children_states);
+    arb_overlay_height_measure_func(node_data, storage_data, node_state, children_count, children_states);
     if (data->flag & arb_sizebox_overwrite_height_min)  node_state->measured_height.min  = data->height.min;
     if (data->flag & arb_sizebox_overwrite_height_max)  node_state->measured_height.max  = data->height.max;
     if (data->flag & arb_sizebox_overwrite_height_flex) node_state->measured_height.flex = data->height.flex;
@@ -1988,6 +2075,7 @@ const arb_type arb_sizebox_type = {
 
 void row_width_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2012,6 +2100,7 @@ void row_width_measure(
 
 void row_width_distribute(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2086,6 +2175,7 @@ void row_width_distribute(
 
 void row_position(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2114,6 +2204,7 @@ const arb_type arb_row_type = {
 
 void column_height_measure(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2138,6 +2229,7 @@ void column_height_measure(
 
 void column_height_distribute(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2212,6 +2304,7 @@ void column_height_distribute(
 
 void column_position(
     void*                   node_data,
+    void*                   storage_data,
     arb_node_layout_state*  node_state,
     size_t                  children_count,
     arb_node_layout_state** children_states
@@ -2238,7 +2331,7 @@ const arb_type arb_column_type = {
 // ===========================
 // Button Structure
 
-static void button_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
+static void button_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
     arb_button_data* data = node_data;
 
     arb_cursor_state crr = *node_input->mutable_state;
@@ -2295,7 +2388,7 @@ const arb_node arb_button_structure[] = {
 
 static const float scroll_speed_vertical = 2500;
 
-static void vertical_scrollbox_scroll_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
+static void vertical_scrollbox_scroll_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
     arb_scrollbox_data* data = node_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
@@ -2303,7 +2396,7 @@ static void vertical_scrollbox_scroll_cursor_func(void* node_data, arb_node_curs
     }
 }
 
-static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
+static void vertical_scrollbox_transform_func(void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
     arb_scrollbox_data* data = node_data;
 
     // Calculate offset
@@ -2338,10 +2431,12 @@ static void vertical_scrollbox_transform_func(void* node_data, arb_mat3x2* trans
     if (handle_height > data->display_pixels) handle_height = data->display_pixels;
 }
 
-void vertical_scrollbox_position(void* node_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states) {
+void vertical_scrollbox_position(
+    void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states
+) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
-    arb_overlay_position_func(node_data, node_state, children_count, children_states);
+    arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
 
     // Probe height
     arb_scrollbox_data* data = node_data;
@@ -2356,7 +2451,9 @@ static const arb_type vertical_scrollbox_scroller_type = {
     .transform  = vertical_scrollbox_transform_func
 };
 
-static void vertical_scrollbox_handle_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
+static void vertical_scrollbox_handle_transform_func(
+    void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+) {
     arb_scrollbox_data* data = node_data;
 
     if (!data->content_pixels) {
@@ -2396,7 +2493,9 @@ static void vertical_scrollbox_handle_transform_func(void* node_data, arb_mat3x2
     *transform = arb_mat3x2_scale(*transform, 1, sy);
 }
 
-static void vertical_scrollbox_handle_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
+static void vertical_scrollbox_handle_cursor_func(
+    void* node_data, void* storage_data, arb_node_cursor_input* node_input
+) {
     arb_scrollbox_data* data = node_data;
 
     // Reset style
@@ -2517,7 +2616,9 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 
 static const float scroll_speed_horizontal = 3500;
 
-static void horizontal_scrollbox_scroll_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
+static void horizontal_scrollbox_scroll_cursor_func(
+    void* node_data, arb_node_cursor_input* node_input
+) {
     arb_scrollbox_data* data = node_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
@@ -2525,7 +2626,9 @@ static void horizontal_scrollbox_scroll_cursor_func(void* node_data, arb_node_cu
     }
 }
 
-static void horizontal_scrollbox_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
+static void horizontal_scrollbox_transform_func(
+    void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+) {
     arb_scrollbox_data* data = node_data;
 
     // Calculate offset
@@ -2560,10 +2663,12 @@ static void horizontal_scrollbox_transform_func(void* node_data, arb_mat3x2* tra
     if (handle_width > data->display_pixels) handle_width = data->display_pixels;
 }
 
-void horizontal_scrollbox_position(void* node_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states) {
+void horizontal_scrollbox_position(
+    void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states
+) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
-    arb_overlay_position_func(node_data, node_state, children_count, children_states);
+    arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
 
     // Probe width
     arb_scrollbox_data* data = node_data;
@@ -2578,7 +2683,9 @@ static const arb_type horizontal_scrollbox_scroller_type = {
     .transform  = horizontal_scrollbox_transform_func
 };
 
-static void horizontal_scrollbox_handle_transform_func(void* node_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
+static void horizontal_scrollbox_handle_transform_func(
+    void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+) {
     arb_scrollbox_data* data = node_data;
 
     if (!data->content_pixels) {
@@ -2618,7 +2725,7 @@ static void horizontal_scrollbox_handle_transform_func(void* node_data, arb_mat3
     *transform = arb_mat3x2_scale(*transform, sx, 1);
 }
 
-static void horizontal_scrollbox_handle_cursor_func(void* node_data, arb_node_cursor_input* node_input) {
+static void horizontal_scrollbox_handle_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
     arb_scrollbox_data* data = node_data;
 
     // Reset style
