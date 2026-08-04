@@ -464,19 +464,10 @@ typedef struct arb_button_data {
 extern const arb_node arb_vertical_scrollbox_structure[];
 extern const arb_node arb_horizontal_scrollbox_structure[];
 typedef struct arb_scrollbox_data {
-    // Config
     arb_box_data    default_style;
     arb_box_data    hovered_style;
     arb_box_data    pressed_style;
     const arb_node* child;
-
-    // State
-    int             position;
-    arb_box_data    current_handle_style;
-    int             handle_drag;
-    int             display_pixels;
-    int             content_pixels;
-    int             last_content_offset;
 } arb_scrollbox_data;
 
 // ===========================
@@ -617,18 +608,18 @@ arb_upload_access arb_cache_free_all_text(
 
 /* 
     Implementation Notes:
-    1 - last_frame_used_in_render values reference
-        last_frame_used_in_render is used to clear hashmap from dead nodes
+    1 - last_frame_used values reference
+        last_frame_used is used to clear hashmap from dead nodes
     0     - empty cell
     1     - imposible value, to force garbage collection on all
     2     - tombstone
     3-255 - rendered at frame of index
 */
 
-#define LAST_FRAME_USED_IN_RENDER_EMPTY      0
-#define LAST_FRAME_USED_IN_RENDER_IMPOSIBLE  1
-#define LAST_FRAME_USED_IN_RENDER_TOMBSTONE  2
-#define LAST_FRAME_USED_IN_RENDER_FIRST      3
+#define LAST_FRAME_USED_EMPTY      0
+#define LAST_FRAME_USED_IMPOSIBLE  1
+#define LAST_FRAME_USED_TOMBSTONE  2
+#define LAST_FRAME_USED_FIRST      3
 
 // ===========================
 // Math helpers
@@ -778,7 +769,7 @@ void arb_free_cache(arb_cache* cache) {
     if (!cache) return;
 
     // Free all cached texts and storage by using impossible value
-    cache->frame_index = LAST_FRAME_USED_IN_RENDER_IMPOSIBLE;
+    cache->frame_index = LAST_FRAME_USED_IMPOSIBLE;
     text_cache_hashmap_garbage_collect(cache);
     storage_cache_hashmap_garbage_collect(cache);
 
@@ -805,14 +796,14 @@ typedef struct node_stable_index {
 
 typedef struct cache_slot {
     node_stable_index       key;
-    unsigned char           last_frame_used_in_render;
+    unsigned char           last_frame_used;
     size_t                  value_child_count;
     arb_node_layout_state   value_state;
 } cache_slot;
 
 typedef struct text_cache_slot {
     node_stable_index       key;
-    unsigned char           last_frame_used_in_render;
+    unsigned char           last_frame_used;
     int                     text_width;
     int                     text_height;
     void*                   allocation;
@@ -820,7 +811,7 @@ typedef struct text_cache_slot {
 
 typedef struct storage_cache_slot {
     node_stable_index       key;
-    unsigned char           last_frame_used_in_render;
+    unsigned char           last_frame_used;
     uint64_t                bytes;
     void*                   allocation;
 } storage_cache_slot;
@@ -863,9 +854,9 @@ static void PREFIX##_hashmap_grow(arb_cache* cache) {                           
     cache->FILL_FIELD  = 0;                                                     \
 \
     for (size_t i = 0; i < old_cap; ++i) {                                      \
-        unsigned char time = old_slots[i].last_frame_used_in_render;            \
-        if (time == LAST_FRAME_USED_IN_RENDER_EMPTY ||                          \
-            time == LAST_FRAME_USED_IN_RENDER_TOMBSTONE) continue;              \
+        unsigned char time = old_slots[i].last_frame_used;                      \
+        if (time == LAST_FRAME_USED_EMPTY ||                                    \
+            time == LAST_FRAME_USED_TOMBSTONE) continue;                        \
         SLOT_TYPE* dst = PREFIX##_hashmap_get(cache, old_slots[i].key);         \
         *dst = old_slots[i];                                                    \
     }                                                                           \
@@ -886,22 +877,24 @@ static SLOT_TYPE* PREFIX##_hashmap_get(                                         
 \
     for (SLOT_TYPE* tombstone = NULL;;) {                                       \
         SLOT_TYPE* slot = &cache->SLOTS_FIELD[idx];                             \
-        unsigned char time = slot->last_frame_used_in_render;                   \
+        unsigned char time = slot->last_frame_used;                             \
 \
-        if (time == LAST_FRAME_USED_IN_RENDER_EMPTY) {                          \
+        if (time == LAST_FRAME_USED_EMPTY) {                                    \
             if (tombstone) slot = tombstone;                                    \
             else cache->FILL_FIELD++;                                           \
             *slot = (SLOT_TYPE){.key = key};                                    \
+            slot->last_frame_used = cache->frame_index;                         \
             return slot;                                                        \
         }                                                                       \
 \
-        if (time == LAST_FRAME_USED_IN_RENDER_TOMBSTONE) {                      \
+        if (time == LAST_FRAME_USED_TOMBSTONE) {                                \
             if (!tombstone) tombstone = slot;                                   \
-         }                                                                      \
+        }                                                                       \
         else if (                                                               \
-            slot->key.node == key.node &&                                       \
-            slot->key.instance == key.instance                                  \
-        ) return slot;                                                          \
+            slot->key.node == key.node && slot->key.instance == key.instance    \
+        ) {                                                                     \
+            slot->last_frame_used = cache->frame_index; return slot;  \
+        }                                                                       \
 \
         idx = (idx + 1) & mask;                                                 \
     }                                                                           \
@@ -910,13 +903,13 @@ static SLOT_TYPE* PREFIX##_hashmap_get(                                         
 static void PREFIX##_hashmap_garbage_collect(arb_cache* cache) {                \
     for (size_t i = 0; i < cache->CAP_FIELD; i++) {                             \
         SLOT_TYPE*     slot = &cache->SLOTS_FIELD[i];                           \
-        unsigned char* time = &slot->last_frame_used_in_render;                 \
-        if (*time                                           &&                  \
-            *time != LAST_FRAME_USED_IN_RENDER_TOMBSTONE    &&                  \
+        unsigned char* time = &slot->last_frame_used;                           \
+        if (*time &&                                                            \
+            *time != LAST_FRAME_USED_TOMBSTONE    &&                            \
             *time != cache->frame_index                                         \
         ) {                                                                     \
             HASHMAP_SLOT_DESTRUCTOR(slot);                                      \
-            *time = LAST_FRAME_USED_IN_RENDER_TOMBSTONE;                        \
+            *time = LAST_FRAME_USED_TOMBSTONE;                                  \
         }                                                                       \
     }                                                                           \
 }
@@ -1413,9 +1406,6 @@ static void render_dfs(
     void*       data = get_node_data(node, state->instance, state->storage_slot);
     cache_slot* own  = cache_hashmap_get(cache, index);
 
-    // mark used, to avoid garbage collect
-    own->last_frame_used_in_render = cache->frame_index;
-
     // change transform based on node's position and scale
     float off_x   = ((float)own->value_state.hori_offset * 2)   / cache->resolution_x;
     float off_y   = ((float)own->value_state.vert_offset * 2)   / cache->resolution_y;
@@ -1464,11 +1454,7 @@ static void render_dfs(
     // Request text draw
     else if (node->type == &arb_text_type) {
         const arb_text_data* tdata = data;
-
-        // Prevent text garbage collection
         text_cache_slot* text_cache = text_cache_hashmap_get(cache, index);
-        text_cache->last_frame_used_in_render = cache->frame_index;
-
         draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
             .clip_index         = state->clipbox_index,
@@ -1485,6 +1471,7 @@ static void render_dfs(
         cursor_input_box_cache_push(cache, (cursor_input_box){
             .owner          = index,
             .handle         = node->type->cursor,
+            .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
             .box_transform  = transform
@@ -1512,7 +1499,6 @@ static void render_dfs(
     // Update storage for subtree
     if (node->type == &arb_storage_type) {
         new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->storage_slot);
-        new_state.storage_slot->last_frame_used_in_render = cache->frame_index; // Avoid garbage collection
     }
     // Update depth for subtree
     else if (node->type == &arb_depth_type) {
@@ -1589,7 +1575,7 @@ arb_upload_access arb_cache_update(
     cache->cursor_input_boxes_count     = 0;
 
     // Pick next frame index
-    cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_IN_RENDER_FIRST) cache->frame_index = LAST_FRAME_USED_IN_RENDER_FIRST;
+    cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_FIRST) cache->frame_index = LAST_FRAME_USED_FIRST;
 
     // Render pass
     render_dfs_subtree_state default_subtree_state = {
@@ -1699,7 +1685,7 @@ arb_upload_access arb_cache_free_all_text(
     arb_cache*          cache
 ) {
     // Free all cached texts by using impossible value
-    cache->frame_index = LAST_FRAME_USED_IN_RENDER_IMPOSIBLE;
+    cache->frame_index = LAST_FRAME_USED_IMPOSIBLE;
     text_cache_hashmap_garbage_collect(cache);
 
     // Return access to text free requests
@@ -2406,49 +2392,58 @@ const arb_node arb_button_structure[] = {
 // ===========================
 // Vertical Scrollbox
 
+typedef struct scrollbox_storage {
+    int position;
+    int handle_drag;
+    int display_pixels;
+    int content_pixels;
+    int last_content_offset;
+    arb_box_data current_handle_style;
+} scrollbox_storage;
+
 static const float scroll_speed_vertical = 2500;
 
 static void vertical_scrollbox_scroll_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
-        data->position -= pixel_change;
+        stor->position -= pixel_change;
     }
 }
 
 static void vertical_scrollbox_transform_func(void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Calculate offset
-    int offset_to_align = -data->content_pixels / 2;  // start offseting from align - hardcoded top
-    int total_offset    = offset_to_align + data->position;
+    int offset_to_align = -stor->content_pixels / 2;  // start offseting from align - hardcoded top
+    int total_offset    = offset_to_align + stor->position;
 
     // No scrolling needed
-    if (data->content_pixels <= data->display_pixels) {
-        total_offset  = (data->content_pixels - data->display_pixels) / 2;
-        data->position = 0;
+    if (stor->content_pixels <= stor->display_pixels) {
+        total_offset  = (stor->content_pixels - stor->display_pixels) / 2;
+        stor->position = 0;
     } 
     // Clamp
     else {
-        int max_offset = (data->content_pixels - data->display_pixels) / 2;
+        int max_offset = (stor->content_pixels - stor->display_pixels) / 2;
         if (total_offset >  max_offset) {
             total_offset = max_offset;
-            data->position = max_offset - offset_to_align;
+            stor->position = max_offset - offset_to_align;
         }
         if (total_offset < -max_offset) {
             total_offset = -max_offset;
-            data->position = -max_offset - offset_to_align;
+            stor->position = -max_offset - offset_to_align;
         }
     }
 
     // Offset transform
     *transform = arb_mat3x2_offset(*transform, 0, 2 * (float)total_offset / resolution_y);
-    data->last_content_offset = total_offset;
+    stor->last_content_offset = total_offset;
 
     // Calculate handle size
-    float diplayed_portion = data->content_pixels ? (float)data->display_pixels / data->content_pixels : 0.0f;
-    float handle_height    = data->display_pixels * diplayed_portion;
-    if (handle_height > data->display_pixels) handle_height = data->display_pixels;
+    float diplayed_portion = stor->content_pixels ? (float)stor->display_pixels / stor->content_pixels : 0.0f;
+    float handle_height    = stor->display_pixels * diplayed_portion;
+    if (handle_height > stor->display_pixels) handle_height = stor->display_pixels;
 }
 
 void vertical_scrollbox_position(
@@ -2459,9 +2454,9 @@ void vertical_scrollbox_position(
     arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
 
     // Probe height
-    arb_scrollbox_data* data = node_data;
-    data->display_pixels = node_state->given_height;
-    data->content_pixels = node_state->measured_height.max;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+    stor->display_pixels = node_state->given_height;
+    stor->content_pixels = node_state->measured_height.max;
 }
 
 // Special type to offset content and probe height given and measured
@@ -2474,19 +2469,19 @@ static const arb_type vertical_scrollbox_scroller_type = {
 static void vertical_scrollbox_handle_transform_func(
     void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
 ) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
-    if (!data->content_pixels) {
+    if (!stor->content_pixels) {
         *transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle height as a fraction of displayed height
-    float visible_fraction = (float)data->display_pixels / data->content_pixels;
+    float visible_fraction = (float)stor->display_pixels / stor->content_pixels;
     if (visible_fraction > 1.0f) visible_fraction = 1.0f; // clamp
 
     // Find handle height
-    int height = data->display_pixels * visible_fraction;
-    if (height > data->content_pixels) height = data->content_pixels;
+    int height = stor->display_pixels * visible_fraction;
+    if (height > stor->content_pixels) height = stor->content_pixels;
 
     // Position handle
     int handle_offset = 0;
@@ -2495,18 +2490,18 @@ static void vertical_scrollbox_handle_transform_func(
     }
     else {
         // Find current lerp alpha of content between ends
-        float begin = (data->content_pixels - data->display_pixels) / 2;
+        float begin = (stor->content_pixels - stor->display_pixels) / 2;
         float end   = -begin;
-        float alpha = (data->last_content_offset - begin) / (end -  begin);
+        float alpha = (stor->last_content_offset - begin) / (end -  begin);
 
         // Apply alpha to handle movement
-        begin = -(data->display_pixels / 2) + (height / 2);
+        begin = -(stor->display_pixels / 2) + (height / 2);
         end   = -begin;
         handle_offset = begin + (end - begin) * alpha;
     }
 
     // Find vertical scale
-    float sy = (float)height / data->display_pixels;
+    float sy = (float)height / stor->display_pixels;
 
     // Apply to transform
     *transform = arb_mat3x2_offset(*transform, 0, 2 * (float)handle_offset / resolution_y);
@@ -2516,37 +2511,37 @@ static void vertical_scrollbox_handle_transform_func(
 static void vertical_scrollbox_handle_cursor_func(
     void* node_data, void* storage_data, arb_node_cursor_input* node_input
 ) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Reset style
-    data->current_handle_style = data->default_style;
+    stor->current_handle_style = data->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) data->current_handle_style = data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = data->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
     if (left_pressed) {
         int cursor_y = node_input->mutable_state->position_y;
-        if (data->handle_drag != -1) {                         // Was dragged
-            int pixels_change = data->handle_drag - cursor_y;  // Calculate pixel movement within handle
-            pixels_change *= (data->content_pixels / data->display_pixels); // Calculate pixel movement within content
+        if (stor->handle_drag != -1) {                         // Was dragged
+            int pixels_change = stor->handle_drag - cursor_y;  // Calculate pixel movement within handle
+            pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
-            data->position -= pixels_change;
-            data->current_handle_style = data->pressed_style;
+            stor->position -= pixels_change;
+            stor->current_handle_style = data->pressed_style;
 
-            data->handle_drag = cursor_y;
+            stor->handle_drag = cursor_y;
             node_input->mutable_state->left_down = 0;   // Consume left click
         }
         else if (node_input->hovered) {
             int c_left_pressed = node_input->mutable_state->left_down;
             int p_left_pressed = node_input->prev_raw_state->left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
-            data->handle_drag = cursor_y;
+            stor->handle_drag = cursor_y;
             node_input->mutable_state->left_down = 0;   // Consume left click
         }
     }
-    else data->handle_drag = -1;
+    else stor->handle_drag = -1;
 }
 
 // Special type to apply handle transform and receive cursor events
@@ -2592,13 +2587,17 @@ const arb_node vertical_scrollbox_handle[] = {
     },
     {   // Handle visual
         .type  = &arb_box_type,
-        .flags = arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset = offsetof(arb_scrollbox_data, current_handle_style)
+        .flags = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        .data_offset = offsetof(scrollbox_storage, current_handle_style)
     },
     ARB_LAST
 };
 
 const arb_node arb_vertical_scrollbox_structure[] = {
+    {   // Storage for state
+        .type = &arb_storage_type,
+        .data_offset = sizeof(scrollbox_storage)
+    },
     {   // Clipbox
         .type  = &arb_box_type,
         .flags = arb_flag_clipbox | arb_flag_ignore_min_height,
@@ -2637,50 +2636,50 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 static const float scroll_speed_horizontal = 3500;
 
 static void horizontal_scrollbox_scroll_cursor_func(
-    void* node_data, arb_node_cursor_input* node_input
+    void* node_data, void* storage_data, arb_node_cursor_input* node_input
 ) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
-        data->position += pixel_change;
+        stor->position += pixel_change;
     }
 }
 
 static void horizontal_scrollbox_transform_func(
     void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
 ) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Calculate offset
-    int offset_to_align = -data->content_pixels / 2;  // start offseting from align - hardcoded left
-    int total_offset    = offset_to_align + data->position;
+    int offset_to_align = -stor->content_pixels / 2;  // start offseting from align - hardcoded left
+    int total_offset    = offset_to_align + stor->position;
 
     // No scrolling needed
-    if (data->content_pixels <= data->display_pixels) {
+    if (stor->content_pixels <= stor->display_pixels) {
         total_offset  = 0;
-        data->position = 0;
+        stor->position = 0;
     } 
     // Clamp
     else {
-        int max_offset = (data->content_pixels - data->display_pixels) / 2;
+        int max_offset = (stor->content_pixels - stor->display_pixels) / 2;
         if (total_offset >  max_offset) {
             total_offset = max_offset;
-            data->position = max_offset - offset_to_align;
+            stor->position = max_offset - offset_to_align;
         }
         if (total_offset < -max_offset) {
             total_offset = -max_offset;
-            data->position = -max_offset - offset_to_align;
+            stor->position = -max_offset - offset_to_align;
         }
     }
 
     // Offset transform
     *transform = arb_mat3x2_offset(*transform, 2 * (float)total_offset / resolution_x, 0);
-    data->last_content_offset = total_offset;
+    stor->last_content_offset = total_offset;
 
     // Calculate handle size
-    float diplayed_portion = data->content_pixels ? (float)data->display_pixels / data->content_pixels : 0.0f;
-    float handle_width     = data->display_pixels * diplayed_portion;
-    if (handle_width > data->display_pixels) handle_width = data->display_pixels;
+    float diplayed_portion = stor->content_pixels ? (float)stor->display_pixels / stor->content_pixels : 0.0f;
+    float handle_width     = stor->display_pixels * diplayed_portion;
+    if (handle_width > stor->display_pixels) handle_width = stor->display_pixels;
 }
 
 void horizontal_scrollbox_position(
@@ -2691,9 +2690,9 @@ void horizontal_scrollbox_position(
     arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
 
     // Probe width
-    arb_scrollbox_data* data = node_data;
-    data->display_pixels = node_state->given_width;
-    data->content_pixels = node_state->measured_width.max;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+    stor->display_pixels = node_state->given_width;
+    stor->content_pixels = node_state->measured_width.max;
 }
 
 // Special type to offset content and probe width given and measured
@@ -2706,19 +2705,19 @@ static const arb_type horizontal_scrollbox_scroller_type = {
 static void horizontal_scrollbox_handle_transform_func(
     void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
 ) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
-    if (!data->content_pixels) {
+    if (!stor->content_pixels) {
         *transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle width as a fraction of displayed width
-    float visible_fraction = (float)data->display_pixels / data->content_pixels;
+    float visible_fraction = (float)stor->display_pixels / stor->content_pixels;
     if (visible_fraction > 1.0f) visible_fraction = 1.0f; // clamp
 
     // Find handle width
-    int width = data->display_pixels * visible_fraction;
-    if (width > data->content_pixels) width = data->content_pixels;
+    int width = stor->display_pixels * visible_fraction;
+    if (width > stor->content_pixels) width = stor->content_pixels;
 
     // Position handle
     int handle_offset = 0;
@@ -2727,18 +2726,18 @@ static void horizontal_scrollbox_handle_transform_func(
     }
     else {
         // Find current lerp alpha of content between ends
-        float begin = (data->content_pixels - data->display_pixels) / 2;
+        float begin = (stor->content_pixels - stor->display_pixels) / 2;
         float end   = -begin;
-        float alpha = (data->last_content_offset - begin) / (end -  begin);
+        float alpha = (stor->last_content_offset - begin) / (end -  begin);
 
         // Apply alpha to handle movement
-        begin = -(data->display_pixels / 2) + (width / 2);
+        begin = -(stor->display_pixels / 2) + (width / 2);
         end   = -begin;
         handle_offset = begin + (end - begin) * alpha;
     }
 
     // Find horizontal scale
-    float sx = (float)width / data->display_pixels;
+    float sx = (float)width / stor->display_pixels;
 
     // Apply to transform
     *transform = arb_mat3x2_offset(*transform, 2 * (float)handle_offset / resolution_x, 0);
@@ -2746,37 +2745,37 @@ static void horizontal_scrollbox_handle_transform_func(
 }
 
 static void horizontal_scrollbox_handle_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
-    arb_scrollbox_data* data = node_data;
+    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Reset style
-    data->current_handle_style = data->default_style;
+    stor->current_handle_style = data->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) data->current_handle_style = data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = data->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
     if (left_pressed) {
         int cursor_x = node_input->mutable_state->position_x;
-        if (data->handle_drag != -1) {                         // Was dragged
-            int pixels_change = data->handle_drag - cursor_x;  // Calculate pixel movement within handle
-            pixels_change *= (data->content_pixels / data->display_pixels); // Calculate pixel movement within content
+        if (stor->handle_drag != -1) {                         // Was dragged
+            int pixels_change = stor->handle_drag - cursor_x;  // Calculate pixel movement within handle
+            pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
-            data->position += pixels_change;
-            data->current_handle_style = data->pressed_style;
+            stor->position += pixels_change;
+            stor->current_handle_style = data->pressed_style;
 
-            data->handle_drag = cursor_x;
+            stor->handle_drag = cursor_x;
             node_input->mutable_state->left_down = 0;   // Consume left click
         }
         else if (node_input->hovered) {
             int c_left_pressed = node_input->mutable_state->left_down;
             int p_left_pressed = node_input->prev_raw_state->left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
-            data->handle_drag = cursor_x;
+            stor->handle_drag = cursor_x;
             node_input->mutable_state->left_down = 0;   // Consume left click
         }
     }
-    else data->handle_drag = -1;
+    else stor->handle_drag = -1;
 }
 
 // Special type to apply handle transform and receive cursor events
@@ -2822,13 +2821,17 @@ const arb_node horizontal_scrollbox_handle[] = {
     },
     {   // Handle visual
         .type  = &arb_box_type,
-        .flags = arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset = offsetof(arb_scrollbox_data, current_handle_style)
+        .flags = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        .data_offset = offsetof(scrollbox_storage, current_handle_style)
     },
     ARB_LAST
 };
 
 const arb_node arb_horizontal_scrollbox_structure[] = {
+    {   // Storage for state
+        .type = &arb_storage_type,
+        .data_offset = sizeof(scrollbox_storage)
+    },
     {   // Clipbox
         .type  = &arb_box_type,
         .flags = arb_flag_clipbox | arb_flag_ignore_min_width,
