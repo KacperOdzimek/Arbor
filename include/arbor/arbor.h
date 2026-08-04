@@ -759,7 +759,9 @@ struct arb_cache {
 };
 
 arb_cache* arb_create_cache() {
-    return calloc(1, sizeof(arb_cache));
+    arb_cache* cache = calloc(1, sizeof(arb_cache));
+    if (cache) cache->frame_index = LAST_FRAME_USED_FIRST;
+    return cache;
 }
 
 static void free_cached_text_alloc_requests(arb_cache* cache);
@@ -892,9 +894,7 @@ static SLOT_TYPE* PREFIX##_hashmap_get(                                         
         }                                                                       \
         else if (                                                               \
             slot->key.node == key.node && slot->key.instance == key.instance    \
-        ) {                                                                     \
-            slot->last_frame_used = cache->frame_index; return slot;  \
-        }                                                                       \
+        ) { slot->last_frame_used = cache->frame_index; return slot; }          \
 \
         idx = (idx + 1) & mask;                                                 \
     }                                                                           \
@@ -1171,8 +1171,7 @@ void caches_walk_dfs(
 
     // Load storage slot
     if (node->type == &arb_storage_type) {
-        // Get without alloc, as alloc happen in render
-        storage = storage_cache_hashmap_get(walk_order->cache, current->key);
+        storage = storage_cache_hashmap_get(walk_order->cache, current->key);   // Get without alloc, as alloc happen in render
     }
 
     if (!node->type->array_child && child) {
@@ -1184,7 +1183,7 @@ void caches_walk_dfs(
         caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
 
-    // recurse
+    // Recurse
     size_t begin_pos = walk_order->position - count;
     for (size_t i = 0; i < count; i++) {
         caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance, storage);
@@ -1359,6 +1358,7 @@ typedef struct render_dfs_subtree_state {
     arb_node_cursor_func    cursor_handle;
     arb_node_render_func    transform_handle;
     storage_cache_slot*     storage_slot;
+    void*                   storage_data;
 } render_dfs_subtree_state;
 
 static void render_dfs(
@@ -1416,12 +1416,12 @@ static void render_dfs(
 
     // Do transform if method provided
     if (node->type->transform) node->type->transform(
-        data, state->storage_slot, &transform, cache->resolution_x, cache->resolution_y
+        data, state->storage_data, &transform, cache->resolution_x, cache->resolution_y
     );
 
     // Transform from transform call
     if (node->type == &arb_transform_call_type && state->transform_handle) {
-        state->transform_handle(data, state->storage_slot, &transform, cache->resolution_x, cache->resolution_y);
+        state->transform_handle(data, state->storage_data, &transform, cache->resolution_x, cache->resolution_y);
     }
 
     // Push pinkbox request
@@ -1499,6 +1499,7 @@ static void render_dfs(
     // Update storage for subtree
     if (node->type == &arb_storage_type) {
         new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->storage_slot);
+        new_state.storage_data = safe_storage_slot_get_allocation(new_state.storage_slot);
     }
     // Update depth for subtree
     else if (node->type == &arb_depth_type) {
@@ -1560,8 +1561,7 @@ arb_upload_access arb_cache_update(
         return (arb_upload_access){0};
     }
     else if (setjmp_val == emergency_jump_flag_grow_occured) {
-        walk_order.position = 0;
-        // redo everyting
+        walk_order.position = 0; // and redo everyting
     }
 
     // Init state
@@ -1573,9 +1573,6 @@ arb_upload_access arb_cache_update(
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
     cache->cursor_input_boxes_count     = 0;
-
-    // Pick next frame index
-    cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_FIRST) cache->frame_index = LAST_FRAME_USED_FIRST;
 
     // Render pass
     render_dfs_subtree_state default_subtree_state = {
@@ -1661,6 +1658,9 @@ arb_upload_access arb_cache_update(
         text_cache_hashmap_garbage_collect(cache);
         storage_cache_hashmap_garbage_collect(cache);
     }
+
+    // Pick next frame index
+    cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_FIRST) cache->frame_index = LAST_FRAME_USED_FIRST;
 
     // Return upload access
     return (arb_upload_access){
