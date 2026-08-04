@@ -966,8 +966,23 @@ static inline storage_cache_slot* storage_cache_hashmap_get_with_alloc(arb_cache
     storage_cache_slot* slot = storage_cache_hashmap_get(cache, index);
     uint64_t bytes = (uint64_t)(get_node_data(index.node, index.instance, storage));
     if (slot->bytes != bytes) {
+        // 0 bytes realloc case
+        if (bytes == 0) {
+            free(slot->allocation); 
+            slot->allocation = 0;
+            slot->bytes = 0;
+            return slot;
+        }
+
+        // shrink or grow case
         void* new_alloc = realloc(slot->allocation, bytes);
         if (!new_alloc) longjmp(cache->emergency, emergency_jump_flag_allocation_failure);
+
+        // 0-initialize new space if grown
+        if (bytes > slot->bytes) {
+            memset((char*)new_alloc + slot->bytes, 0, bytes - slot->bytes);
+        }
+
         slot->allocation = new_alloc;
         slot->bytes = bytes;
     }
@@ -2390,7 +2405,7 @@ const arb_node arb_button_structure[] = {
 };
 
 // ===========================
-// Vertical Scrollbox
+// Scrollbox Common
 
 typedef struct scrollbox_storage {
     int position;
@@ -2400,6 +2415,9 @@ typedef struct scrollbox_storage {
     int last_content_offset;
     arb_box_data current_handle_style;
 } scrollbox_storage;
+
+// ===========================
+// Vertical Scrollbox
 
 static const float scroll_speed_vertical = 2500;
 
