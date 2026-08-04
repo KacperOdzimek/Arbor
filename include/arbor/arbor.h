@@ -724,7 +724,8 @@ struct arb_cache {
     unsigned char           frame_index;
 
     // Emergency jump to update function
-    // Return with non-zero to opt-out
+    // Return with emergency_jump_flag flag
+    // respective to error class
     jmp_buf                 emergency;
 
     // Nodes cache hashmap
@@ -846,7 +847,6 @@ static size_t hash_key(node_stable_index key) {
 // void       PREFIX##_hashmap_grow             (arb_cache* cache);
 // SLOT_TYPE* PREFIX##_hashmap_get              (arb_cache* cache, node_stable_index key)
 // void       PREFIX##_hashmap_garbage_collect  (arb_cache* cache) 
-// Define HASHMAP_SLOT_INITIALIZER to define default slot value
 // Define HASHMAP_SLOT_DESTRUCTOR(slot ptr) to set garbage collector slot free method
 #define DEFINE_HASHMAP_FUNCS(PREFIX, SLOT_TYPE, SLOTS_FIELD, CAP_FIELD, FILL_FIELD) \
 \
@@ -1124,13 +1124,14 @@ typedef struct caches_walk_order {
 // except cache field being untouched
 void free_caches_walk_order(caches_walk_order* order) {
     free(order->slots);     order->slots    = NULL;
+    free(order->storages);  order->storages = NULL;
     free(order->states);    order->states   = NULL;
     free(order->subtree);   order->subtree  = NULL;
     order->capacity = 0;    order->position = 0;
 }
 
 // Returns non-zero at success
-static inline int caches_walk_order_push(caches_walk_order* walk_order, cache_slot* slot, storage_cache_slot* storage_slot) {
+static inline void caches_walk_order_push(caches_walk_order* walk_order, cache_slot* slot, storage_cache_slot* storage_slot) {
     if (walk_order->position + 1 > walk_order->capacity) {
         size_t new_cap = walk_order->capacity ? walk_order->capacity * 2 : 64;
     
@@ -1140,9 +1141,12 @@ static inline int caches_walk_order_push(caches_walk_order* walk_order, cache_sl
         size_t*                 new_sub = realloc(walk_order->subtree,  new_cap * sizeof(size_t));
 
         if (!new_slt || !new_sto || !new_sts || !new_sub) {
-            free(new_slt); free(new_sto); free(new_sts); free(new_sub);
-            free_caches_walk_order(walk_order);
-            return 0; // failed to realloc -> failed to push -> entire layout fails
+            if (new_slt) free(new_slt); else free(walk_order->slots);
+            if (new_sto) free(new_sto); else free(walk_order->storages);
+            if (new_sts) free(new_sts); else free(walk_order->states);
+            if (new_sub) free(new_sub); else free(walk_order->subtree);
+            walk_order->position = 0; walk_order->capacity = 0;
+            longjmp(walk_order->cache->emergency, emergency_jump_flag_allocation_failure);
         }
 
         walk_order->capacity = new_cap;
@@ -1157,14 +1161,11 @@ static inline int caches_walk_order_push(caches_walk_order* walk_order, cache_sl
     walk_order->states  [walk_order->position] = &slot->value_state;
     walk_order->subtree [walk_order->position] = 1; // included node itself
     walk_order->position++;
-
-    return 1; // success
 }
 
 // Pushes all child nodes caches of node to caches_walk_order
 // Recurse into children left to right
-// Returns non-zero at success
-int caches_walk_dfs(
+void caches_walk_dfs(
     caches_walk_order*  walk_order, 
     cache_slot*         current, 
     size_t*             subtree_size_target, 
@@ -1174,7 +1175,6 @@ int caches_walk_dfs(
     const arb_node* node  = current->key.node;
     const arb_node* child = get_node_child(current->key.node, current->key.instance, storage);
     size_t          count = 0;
-    int             scc   = 1;
 
     // Change instance for subtree
     if (node->type == &arb_instance_type) {
@@ -1188,23 +1188,22 @@ int caches_walk_dfs(
     }
 
     if (!node->type->array_child && child) {
-        cache_slot*     child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
-        scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
+        cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
+        caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
     else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
-        cache_slot*     child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
-        scc &= caches_walk_order_push(walk_order, child_slot, storage); count++;
+        cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
+        caches_walk_order_push(walk_order, child_slot, storage); count++;
     }
 
     // recurse
     size_t begin_pos = walk_order->position - count;
     for (size_t i = 0; i < count; i++) {
-        scc &= caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance, storage);
+        caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance, storage);
         *subtree_size_target += walk_order->subtree[begin_pos + i];
     }
 
     current->value_child_count = count;
-    return scc;
 }
 
 // Generic layout dfs generation macros
@@ -1286,8 +1285,8 @@ void text_gen_dfs(
     storage_cache_slot* storage,
     size_t              first_child
 ) {
-    cache_slot**         children    = &walk_order->slots[first_child];
-    size_t*              subtrees    = &walk_order->subtree[first_child];
+    cache_slot**         children = &walk_order->slots[first_child];
+    size_t*              subtrees = &walk_order->subtree[first_child];
     storage_cache_slot** storages = &walk_order->storages[first_child];
 
     void* data = get_node_data(current->key.node, current->key.instance, storage);
@@ -1473,7 +1472,7 @@ static void render_dfs(
 
         // Prevent text garbage collection
         text_cache_slot* text_cache = text_cache_hashmap_get(cache, index);
-        if (text_cache) text_cache->last_frame_used_in_render = cache->frame_index;
+        text_cache->last_frame_used_in_render = cache->frame_index;
 
         draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
@@ -1576,8 +1575,12 @@ arb_upload_access arb_cache_update(
     // May happen when allocation failed, then we opt-out
     int setjmp_val = setjmp(cache->emergency);
     if (setjmp_val == emergency_jump_flag_allocation_failure) {
-        free_caches_walk_order(&walk_order); goto _return;
+        free_caches_walk_order(&walk_order);
         return (arb_upload_access){0};
+    }
+    else if (setjmp_val == emergency_jump_flag_grow_occured) {
+        walk_order.position = 0;
+        // redo everyting
     }
 
     // Init state
@@ -1656,9 +1659,7 @@ arb_upload_access arb_cache_update(
 
         // Find walk order
         size_t root_subtree  = 1; // root itself included
-        if (!caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL, NULL)) {
-            free_caches_walk_order(&walk_order); goto _return;
-        }
+        caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL, NULL);
         
         // Perform all passes
         text_gen_dfs(&walk_order, root_cache, NULL, 0);
@@ -1680,7 +1681,6 @@ arb_upload_access arb_cache_update(
         storage_cache_hashmap_garbage_collect(cache);
     }
 
-_return:
     // Return upload access
     return (arb_upload_access){
         .resolution_x        = cache->resolution_x,
