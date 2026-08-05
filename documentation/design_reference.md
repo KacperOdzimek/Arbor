@@ -212,7 +212,7 @@ arb_node inventory_slot[] = {
 arb_node a_bigger_ui[] = {
     // Sets current instance
     ARB_INST(&(inventory_slot_data){
-        .slot_content = { .tint = ARB_HEX(#FFFFFF), .rounding = 32 }
+        .slot_content = { .tint = ARB_HEX(#FFFFFF), .rounding = 32 } // Arbitrary params
     }),
     // Enter prefab
     ARB_IDIR(inventory_slot)
