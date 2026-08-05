@@ -311,8 +311,8 @@ typedef enum arb_invalidation_flag {
     arb_invalidation_flag_all               = 63,
 } arb_invalidation_flag;
 typedef struct arb_invalidation_data {
-    arb_invalidation_flag flag_consumable;
-    arb_invalidation_flag flag_always;
+    arb_invalidation_flag* flag_always_ptr;         // null-able
+    arb_invalidation_flag* flag_consumable_ptr;     // null-able
 } arb_invalidation_data;
 
 // Indirect type
@@ -1093,16 +1093,17 @@ typedef enum invalidation_flag_only {
 
 static inline int find_shall_recurse(cache_slot* node_slot, const void* data, invalidation_flag_only pass) {
     if (node_slot->key.node->type != &arb_invalidation_type) return 1;
-    const arb_invalidation_data* inv_data = (arb_invalidation_data*)data; // special case where const may be discarded
+    const arb_invalidation_data* inv_data = data; // special case where const may be discarded
 
-    // recurse one time in this pass
-    if (inv_data->flag_consumable & pass) {
-        inv_data->flag_consumable &= ~(pass);   // turn off this pass bit
+    // Recurse one time in this pass
+    if (inv_data->flag_consumable_ptr && (*inv_data->flag_consumable_ptr & pass)) {
+        *inv_data->flag_consumable_ptr &= ~(pass);   // turn off this pass bit
         return 1;
     }
 
-    // recurse only if marked always to do it
-    return inv_data->flag_always & pass;
+    // Recurse if marked always to do it
+    if (!inv_data->flag_always_ptr) return 0;
+    return *inv_data->flag_always_ptr & pass;
 }
 
 // Cache Walk Pass
