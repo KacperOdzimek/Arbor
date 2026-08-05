@@ -1,10 +1,7 @@
 # Arbor UI — Types Reference
 
-This is a companion to the main design reference, for anyone implementing a
-new `arb_type` rather than just composing existing ones. It assumes the
-reader is comfortable with the tree/branch model, sizing flags, instancing,
-and storage already — this document is about the five-stage pipeline every
-type plugs into.
+This document explains how to implement a custom ``arb_type``.
+Also the layout pipeline of Arbor, because it is required to do so.
 
 ## 1. What a Type Is
 
