@@ -135,7 +135,7 @@ arb_node main_structure[] = {
 
 ## 3. Sizing
 
-By default a node has no opinion about its own size beyond what its child
+Most nodes has no opinion about its own size beyond what its child
 needs — it wraps its children. A bare box with no size-related flags renders
 at 0×0, because it wraps nothing.
 
