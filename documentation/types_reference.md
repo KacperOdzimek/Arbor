@@ -125,18 +125,13 @@ space usually just leaves the offset at `0`. A node that aligns or spaces
 multiple children (rows, columns, overlays) computes each child's offset
 here.
 
-If `position` is left as `NULL`, children are left centered on their parent
-by default.
-
 ## 3. Predefined Functions and ARB_TYPE_OVERLAY_INIT
 
 Most single- and array-child types only need to customize *one* axis of
 behavior and are otherwise happy to behave like a plain overlay on the
 other four stages — a row, for instance, only really has something new to
-say about `width_distribute` (lay children left to right) and `position`
-(align them vertically); its `width_measure`, `height_measure`, and
-`height_distribute` are identical to what an overlay would already do
-(wrap to the largest child, then hand every child the full given size).
+say about `width_measure`, `width_distribute` and `position`; 
+it's `height_measure` and `height_distribute` are identical to what an overlay would already do (wrap to the largest child, then hand every child the full given size).
 
 A set of predefined functions capture that common overlay behavior so it
 doesn't need to be reimplemented per type:
@@ -167,15 +162,6 @@ And a shortcut macro to pull all four non-positioning ones in at once:
     .height_measure     = arb_overlay_height_measure_func,      \
     .height_distribute  = arb_overlay_height_distribute_func
 ```
-
-This is handy precisely because a new type so often only wants to override
-one axis: a type can spread `ARB_TYPE_OVERLAY_INIT` into its `arb_type`
-definition to get sensible measure/distribute behavior on both axes for
-free, then override just the one or two fields (typically
-`width_distribute` and `position`, or `height_distribute` and `position`)
-that actually differ from plain overlay behavior — rather than
-reimplementing wrap-to-largest-child and fill-given-space logic from
-scratch every time.
 
 ## 4. Rendering: `transform`
 
