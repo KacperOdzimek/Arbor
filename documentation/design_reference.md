@@ -234,7 +234,7 @@ typedef struct scrollbox_data {
 ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(scrollbox_data, scrolled_child))
 ```
 
-> This is a special case: normally, instancing causes a branch read inside
+> This is a special case: normally, instancing would cause a branch read inside
 > the instance structure directly; the Arbor implementation adds an
 > additional indirection in this case, allowing a pointer stored in the
 > structure to be followed instead.
