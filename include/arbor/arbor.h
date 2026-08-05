@@ -477,7 +477,7 @@ typedef struct arb_scrollbox_data {
 #define ARB_NODE(argtype, argflags, ...) (arb_node){ \
     .type  = (&argtype),    \
     .flags = (argflags),    \
-    .data  = (__VA_ARGS__)  \
+    .data_offset  = (size_t)(__VA_ARGS__)  \
 }
 
 // Uniform padding (0, max_value, flex 1) node
@@ -2380,29 +2380,11 @@ static void button_cursor_func(void* node_data, void* storage_data, arb_node_cur
 }
 
 const arb_node arb_button_structure[] = {
-    {   // Create button state storage
-        .type = &arb_storage_type,
-        .data_offset = sizeof(button_storage)
-    },
-    {   // Set handle to button func
-        .type = &arb_cursor_handle_type,
-        .data = button_cursor_func
-    },
-    {   // Do logic
-        .type   = &arb_cursor_call_type,
-        .flags  = arb_flag_instanced_data,
-        .data_offset = 0,   // Instance itself
-    },
-    {   // Box, style = hitbox auxilary current style
-        .type   = &arb_box_type,
-        .flags  = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset  = offsetof(button_storage, current)
-    },
-    {   // Jump to child
-        .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = offsetof(arb_button_data, child)
-    }
+    ARB_NODE(arb_storage_type,       arb_flag_none, sizeof(button_storage)),
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, button_cursor_func),
+    ARB_NODE(arb_cursor_call_type,   arb_flag_instanced_data, 0),
+    ARB_NODE(arb_box_type, arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height, offsetof(button_storage, current)),
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(arb_button_data, child))
 };
 
 // ===========================
