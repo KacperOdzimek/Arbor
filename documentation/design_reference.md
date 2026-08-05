@@ -201,7 +201,7 @@ arb_node inventory_slot[] = {
     // Same here
     ARB_PADD(4),
     // Instanced box data - pulled from the current instance structure
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data,
+    ARB_NODE(arb_box_type, arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
         offsetof(inventory_slot_data, slot_content) // Data = offset in structure
     ),
     ARB_LAST
