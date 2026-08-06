@@ -451,23 +451,23 @@ extern const arb_node arb_button_structure[];
 typedef void(arb_button_func_signature)(void* payload); 
 typedef arb_button_func_signature* arb_button_func;
 typedef struct arb_button_data {
-    void*           payload;
-    arb_button_func on_clicked;
-    arb_button_func on_released;
-    arb_button_func on_held;
-    arb_box_data    default_style;
-    arb_box_data    hovered_style;
-    arb_box_data    pressed_style;
-    const arb_node* child;
+    void*               payload;
+    arb_button_func     on_clicked;
+    arb_button_func     on_released;
+    arb_button_func     on_held;
+    const arb_box_data* default_style;
+    const arb_box_data* hovered_style;
+    const arb_box_data* pressed_style;
+    const arb_node*     child;
 } arb_button_data;
 
 extern const arb_node arb_vertical_scrollbox_structure[];
 extern const arb_node arb_horizontal_scrollbox_structure[];
 typedef struct arb_scrollbox_data {
-    arb_box_data    default_style;
-    arb_box_data    hovered_style;
-    arb_box_data    pressed_style;
-    const arb_node* child;
+    const arb_box_data* default_style;
+    const arb_box_data* hovered_style;
+    const arb_box_data* pressed_style;
+    const arb_node*     child;
 } arb_scrollbox_data;
 
 // ===========================
@@ -477,7 +477,7 @@ typedef struct arb_scrollbox_data {
 #define ARB_NODE(argtype, argflags, ...) (arb_node){ \
     .type  = (&argtype),    \
     .flags = (argflags),    \
-    .data  = (__VA_ARGS__)  \
+    .data_offset  = (size_t)(__VA_ARGS__)  \
 }
 
 // Uniform padding (0, max_value, flex 1) node
@@ -2360,49 +2360,31 @@ static void button_cursor_func(void* node_data, void* storage_data, arb_node_cur
 
     if (just_pressed && node_input->hovered) {  // press started
         stor->pressed = 1;
-        stor->current = data->pressed_style;
+        stor->current = *data->pressed_style;
         if (data->on_clicked) data->on_clicked(data->payload);
         crr.left_down = 0;
     }
     else if (crr.left_down && stor->pressed) {    // held
-        stor->current = data->pressed_style;
+        stor->current = *data->pressed_style;
         if (data->on_held) data->on_held(data->payload);
         crr.left_down = 0;
     }
     else if (just_released && stor->pressed) {   // released
         stor->pressed = 0;
-        if (node_input->hovered) stor->current = data->hovered_style;
-        else stor->current = data->default_style;
+        if (node_input->hovered) stor->current = *data->hovered_style;
+        else stor->current = *data->default_style;
         if (data->on_released)  data->on_released(data->payload);
     }
-    else if (node_input->hovered) stor->current = data->hovered_style;    // hover
-    else stor->current = data->default_style;  // idle
+    else if (node_input->hovered) stor->current = *data->hovered_style;    // hover
+    else stor->current = *data->default_style;  // idle
 }
 
 const arb_node arb_button_structure[] = {
-    {   // Create button state storage
-        .type = &arb_storage_type,
-        .data_offset = sizeof(button_storage)
-    },
-    {   // Set handle to button func
-        .type = &arb_cursor_handle_type,
-        .data = button_cursor_func
-    },
-    {   // Do logic
-        .type   = &arb_cursor_call_type,
-        .flags  = arb_flag_instanced_data,
-        .data_offset = 0,   // Instance itself
-    },
-    {   // Box, style = hitbox auxilary current style
-        .type   = &arb_box_type,
-        .flags  = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset  = offsetof(button_storage, current)
-    },
-    {   // Jump to child
-        .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = offsetof(arb_button_data, child)
-    }
+    ARB_NODE(arb_storage_type,       arb_flag_none, sizeof(button_storage)),
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, button_cursor_func),
+    ARB_NODE(arb_cursor_call_type,   arb_flag_instanced_data, 0),
+    ARB_NODE(arb_box_type, arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height, offsetof(button_storage, current)),
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(arb_button_data, child))
 };
 
 // ===========================
@@ -2535,10 +2517,10 @@ static void vertical_scrollbox_handle_cursor_func(
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Reset style
-    stor->current_handle_style = data->default_style;
+    stor->current_handle_style = *data->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = *data->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
@@ -2549,7 +2531,7 @@ static void vertical_scrollbox_handle_cursor_func(
             pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
             stor->position -= pixels_change;
-            stor->current_handle_style = data->pressed_style;
+            stor->current_handle_style = *data->pressed_style;
 
             stor->handle_drag = cursor_y;
             node_input->mutable_state->left_down = 0;   // Consume left click
@@ -2769,10 +2751,10 @@ static void horizontal_scrollbox_handle_cursor_func(const void* node_data, void*
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Reset style
-    stor->current_handle_style = data->default_style;
+    stor->current_handle_style = *data->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = *data->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
@@ -2783,7 +2765,7 @@ static void horizontal_scrollbox_handle_cursor_func(const void* node_data, void*
             pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
             stor->position += pixels_change;
-            stor->current_handle_style = data->pressed_style;
+            stor->current_handle_style = *data->pressed_style;
 
             stor->handle_drag = cursor_x;
             node_input->mutable_state->left_down = 0;   // Consume left click

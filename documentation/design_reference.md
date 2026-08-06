@@ -1,7 +1,12 @@
-# Design Reference 
-## Node
+# Arbor UI — Design Reference
 
-Arbor UI consists of *nodes* in code *arb_node*. 
+This document covers how to create Arbor trees: node anatomy, how arrays of
+nodes form a tree, sizing rules, the node shortcut macros, instancing, the
+storage system, and the invalidation system.
+
+## 1. The Node
+
+Every piece of UI is an `arb_node`:
 
 ```c
 typedef struct arb_node {
@@ -9,112 +14,132 @@ typedef struct arb_node {
     const uint32_t  flags;
 
     union {
-        void*   data;
-        size_t  data_offset;
+        const void*   data;
+        const size_t  data_offset;
     };
 } arb_node;
 ```
 
-Each node consists of *type* which determines how does node behave, *flags* allowing altering this behavior, and *data* which parametrise *type*.
-With their childrens, node forms *UI tree*. Flags are bitfield, so multiple can be combined with ```|``` bit-or operator.
+- **type** — the behavior of the node (box, text, row, column, ...).
+- **flags** — a bitfield that tweaks that behavior (combined with `|`).
+- **data** — parameters for the type. This is a union: for most nodes it is a
+  plain pointer to a data struct; when `arb_flag_instanced_data` or
+  `arb_flag_storaged_data` is set, the *same bits* are instead read as
+  `data_offset`, a byte offset into an instance or storage block (see
+  *Instancing* and *Storage*).
 
-## Tree Definition
+A node never appears alone — nodes are always written as elements of an
+`arb_node` array, and it is the array itself that encodes the tree shape.
 
-### Single childed nodes:
+## 2. Node Arrays Are Branches
 
-A arbor widget can be definied as flat nodes array:
-<table>
-  <tr>
-    <th>Code</th>
-    <th>Result</th>
-  </tr>
-  <tr>
-    <td valign="top">
-<pre><code class="language-c">arb_node main_structure[] = {
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height &(arb_box_data){
-        .tint = ARB_HEX("#2f3d30")
-    }),
-    ARB_PADD(40),
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height &(arb_box_data){
-        .tint = ARB_HEX("#2c4b2e"),
-        .rounding = 16
-    }),
+Each `arb_node[]` array is **one branch of the UI tree, written out flat, top
+to bottom**. Reading the array top to bottom is the same as walking down the
+branch from parent to child.
+
+```c
+arb_node branch[] = {
+    ARB_NODE(arb_box_type, ..., &box_data),   // Parent
+    ARB_PADD(40),                             // Its child
+    ARB_NODE(arb_box_type, ..., &box_data),   // That padding's child
+    ARB_LAST                                  // Branch ends here
+};
+```
+
+Whether the *next element in the array* is treated as "the single child" or
+"a signpost to somewhere else" depends entirely on the current node's type:
+
+- **Single-child types** (box, text, padding, sizebox, depth, instance,
+  invalidation, ...) always consume the very next array element as their one
+  child. The branch keeps flowing downward through the array.
+- **Array-child types** (row, column, overlay) do not take "the next
+  element" as a single child — they read the following `arb_indirect_type`
+  nodes, each one pointing off to a separate branch. Each indirect node
+  becomes one container child.
+
+`ARB_LAST` is the sentinel that closes a branch, so the interpreter knows not
+to read past the end of the array.
+
+### 2.1 Branching out with indirect nodes (IDIR)
+
+Because a container needs *multiple* children, and an array can only flow
+linearly, a container's children must each be their own branch — a separate
+array — referenced through an `arb_indirect_type` node. This is what
+`ARB_IDIR` produces:
+
+```c
+#define ARB_IDIR(argchild) (arb_node){  \
+    .type   = &arb_indirect_type,       \
+    .data   = (void*)(argchild)         \
+}
+```
+
+The interpreter jumps into the array pointed to by the indirection node,
+treats it as a branch on its own (with its own `ARB_LAST`), and returns once
+that branch is fully consumed.
+
+```c
+arb_node leaf_branch[] = {
+    ARB_NODE(arb_box_type, ..., &green_box),
     ARB_LAST
-};</code></pre>
-    </td>
-    <td valign="top">
-      <img src="design_reference_asset/nesting_example.png" width="300" alt="Nested UI">
-    </td>
-  </tr>
-</table>
-
-Single-child nodes interpret next element of array as own nested child.
-``ARB_LAST`` defines end of chain, preventing reading out-of-bounds.
-
-### Array childed nodes:
-
-Array childed nodes, like rows, columns, overlays, except a array of nodes of ``arb_indirect_type`` type. This type of node sends interpreter to another array of nodes - those will be nested as a single container child. To avoid declaring a lot of separate arrays, ARB_ELEM macro can be used - it definies indirect node to local inline nodes array.
-(Formatting is bad in example due to limitations of github markdown).
-Example:
-
-<table>
-  <tr>
-    <th>Code</th>
-    <th>Result</th>
-  </tr>
-  <tr>
-    <td valign="top">
-<pre><code class="language-c">arb_node separate_array[] = {
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-        .tint = ARB_HEX("#49c554"), .rounding = 16
-    }), ARB_LAST
 };
 
 arb_node main_structure[] = {
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-        .tint = ARB_HEX("#323c32")
-    }),
+    ARB_NODE(arb_box_type, ..., &background),
     ARB_PADD(40),
-    ARB_NODE(arb_column_type, arb_flag_none, &(arb_column_data){
-        .horizontal_align = 0.5, .spacing = (arb_length){0, 20, 1}}
-    ),
-    ARB_ELEM(
-        ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-            .tint = ARB_HEX("#628865"), .rounding = 16
-        }), ARB_LAST
-    ),
-    ARB_IDIR(separate_array),
-    ARB_ELEM(
-        ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-            .tint = ARB_HEX("#01c812"), .rounding = 16
-        }), ARB_LAST
-    ),
-    ARB_LAST
-}; </code></pre>
-    </td>
-    <td valign="top">
-      <img src="design_reference_asset/array_nesting_example.png" width="300" alt="Nested UI">
-    </td>
-  </tr>
-</table>
-
-In example above, column is wrapped by background box and uniform 40px padding. The column contains, two boxes, inlined with ARB_ELEM and one, in separate array pointed by ARB_IDIR indirect node.
-
-## Sizeing
-
-By default node wraps on it's children. That is following widget:
-
-```c
-arb_node widget[] = {
-    ARB_NODE(arb_box_type, arb_flag_none, &(arb_box_data){
-        .tint = ARB_HEX("#ffffff")
-    }),
+    ARB_NODE(arb_column_type, arb_flag_none, &column_data),
+        ARB_IDIR(leaf_branch),  // Child 1: a separate branch
+        ARB_IDIR(leaf_branch),  // Child 2: the *same* branch, reused
     ARB_LAST
 };
 ```
 
-Would render with 0-size as box will wrap on nothing. 
-This behavior can be altered with following flags:
+A single branch array can be pointed to by more than one `IDIR` — it is just
+data, so it is shared and reused freely.
+
+> An indirection node may point to `NULL`, which causes the interpreter not
+> to jump in at all. This matters because indirection nodes are also the
+> mechanism used to inject icons, labels, or arbitrary caller content into
+> prefabs such as buttons.
+
+### 2.2 Inlining a branch with ARB_ELEM
+
+Declaring and naming every small UI branch would be tedious. `ARB_ELEM`
+inlines a branch directly at the call site — it creates a real, separate
+array (an anonymous `arb_node[]`) and points to it through an indirect node.
+
+```c
+#define ARB_ELEM(...) (arb_node){   \
+    .type   = &arb_indirect_type,   \
+    .data   = (arb_node[]){         \
+        __VA_ARGS__                 \
+    }                               \
+}
+```
+
+```c
+arb_node main_structure[] = {
+    ARB_NODE(arb_column_type, arb_flag_none, &column_data),
+    ARB_ELEM(   // Inlined branch
+        ARB_NODE(arb_box_type, ..., &box_a),
+        ARB_LAST
+    ),
+    ARB_IDIR(separate_branch), // Mixing inline and named branches freely
+    ARB_ELEM(   // Inlined branch
+        ARB_NODE(arb_box_type, ..., &box_b),
+        ARB_LAST
+    ),
+    ARB_LAST
+};
+```
+
+## 3. Sizing
+
+Most nodes has no opinion about its own size beyond what its child
+needs — it wraps its children. A bare box with no size-related flags renders
+at 0×0, because it wraps nothing.
+
+Four flags alter this behavior:
 
 ```
 arb_flag_ignore_min_width   // Min width  of this node is set to 0
@@ -123,105 +148,131 @@ arb_flag_ignore_max_width   // Max width  of this node is set to inf
 arb_flag_ignore_max_height  // Max height of this node is set to inf
 ```
 
-Therefore following widget would render spanning entire screen:
+A box with both `ignore_max_*` flags set grows to fill whatever space its
+parent gives it, rather than collapsing to its content.
+
+`ignore_min_*` is mainly useful paired with clipboxes: a clipbox otherwise
+wraps its children like anything else, so it never actually clips anything
+unless it is allowed to be smaller than its content.
+
+## 4. Shortcuts
+
+Writing raw `(arb_node){ .type = ..., .data = ..., .flags = ... }` for every
+node is tedious, so a small set of macros cover the common cases:
+
+| Macro | Purpose |
+|---|---|
+| `ARB_NODE(type, flags, ...)` | Ordinary node: type + flags + data |
+| `ARB_PADD(max_value)` | Uniform padding on all four sides, flexible |
+| `ARB_SINGLE(type, flags, ...)` | A one-node branch, pre-terminated with `ARB_LAST` |
+| `ARB_IDIR(array)` | Indirect node pointing at an existing branch |
+| `ARB_ELEM(...)` | Indirect node pointing at an inlined branch |
+| `ARB_INST(...)` | Sets the instance pointer for the subtree below |
+| `ARB_LAST` | Sentinel marking the end of a branch |
+
+`ARB_NODE` writes through the `data_offset` member of the union (cast from
+whatever is passed in), not `data` directly — this is valid because the two
+members alias the same bits.
+
+## 5. Instancing
+
+Instancing turns a branch into a reusable **prefab**, parametrized by a data
+struct instead of hardcoded values.
+
+- `arb_instance_type` / `ARB_INST(ptr)` sets "the current instance" for
+  everything below it in the tree.
+- Any node under it can add `arb_flag_instanced_data` and, instead of a
+  normal data pointer, supply `offsetof(instance_struct, field)` — meaning
+  "the real data lives at this byte offset inside the current enclosing
+  instance."
+
 ```c
-arb_node widget[] = {
+// Definition
+
+typedef struct inventory_slot_data {
+    arb_box_data slot_content;
+} inventory_slot_data;
+
+arb_node inventory_slot[] = {
+    // This node has static data, unchanged by the instance
     ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-        .tint = ARB_HEX("#ffffff")
+        .tint = ARB_HEX("#909390"), .rounding = 8
     }),
+    // Same here
+    ARB_PADD(4),
+    // Instanced box data - pulled from the current instance structure
+    ARB_NODE(arb_box_type, arb_flag_instanced_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        offsetof(inventory_slot_data, slot_content) // Data = offset in structure
+    ),
     ARB_LAST
+};
+
+// Usage
+
+arb_node a_bigger_ui[] = {
+    // Sets current instance
+    ARB_INST(&(inventory_slot_data){
+        .slot_content = { .tint = ARB_HEX(#FFFFFF), .rounding = 32 } // Arbitrary params
+    }),
+    // Enter prefab
+    ARB_IDIR(inventory_slot)
 };
 ```
 
-Flags are applied at respective *measure* passes.
-Ingore min flags are usefull when used with clipboxes (otherwise clipbox would wrap on children, and not clip anything).
+> Instances can nest: an instanced node inside an already-instanced subtree
+> reads from *its own* instance struct, so a row of slots can offer each
+> slot its own `inventory_slot_data` out of a larger `inventory_row_data`.
 
-## Shortcuts
-
-Nodes can be definied as an C struct:
-```c
-(arb_node){
-    .type  = some type,
-    .data  = some data,
-    .flags = some flags
-}
-```
-Writing long ui like that would be tedious, therefore shortcut macros are definied:
+Because `arb_indirect_type` can also be instanced, a prefab can even expose
+a "slot" for the caller's own children:
 
 ```c
-// Shortcut node creation: type, flags, data
-#define ARB_NODE(argtype, argflags, ...) (arb_node){ \
-    .type  = (&argtype),    \
-    .flags = (argflags),    \
-    .data  = (__VA_ARGS__)  \
-}
+typedef struct scrollbox_data {
+    arb_node* scrolled_child;
+} scrollbox_data;
 
-// Uniform padding (0, max_value, flex 1) node
-#define ARB_PADD(max_value)  (arb_node){   \
-    .type  = &arb_padding_type,                     \
-    .data  = &(arb_padding_data){                   \
-        .top    = (arb_length){0, max_value, 1},    \
-        .bottom = (arb_length){0, max_value, 1},    \
-        .left   = (arb_length){0, max_value, 1},    \
-        .right  = (arb_length){0, max_value, 1},    \
-    },                                              \
-}
-
-// Inline array with single node termianted with ARB_LAST
-#define ARB_SINGLE(argtype, argflags, ...) (arb_node[]){    \
-    ARB_NODE(argtype, argflags, __VA_ARGS__),               \
-    ARB_LAST                                                \
-}
-
-// Indirect node shortcut
-#define ARB_IDIR(argchild) (arb_node){  \
-    .type   = &arb_indirect_type,       \
-    .data   = (void*)(argchild)         \
-}
-
-// Instance node shortcut, data
-#define ARB_INST(...) (arb_node){       \
-    .type   = &arb_instance_type,       \
-    .data   = (__VA_ARGS__)             \
-}
-
-// Local indirect to inlined array
-#define ARB_ELEM(...) (arb_node){   \
-    .type   = &arb_indirect_type,   \
-    .data   = (arb_node[]){         \
-        __VA_ARGS__                 \
-    }                               \
-}
-
-// Sentinel value to mark array end
-#define ARB_LAST (arb_node){.type = NULL, .data = NULL}
+ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(scrollbox_data, scrolled_child))
 ```
 
-## Type
+> This is a special case: normally, instancing would cause a branch read inside
+> the instance structure directly; the Arbor implementation adds an
+> additional indirection in this case, allowing a pointer stored in the
+> structure to be followed instead.
 
-To learn on creating own types, see [Internal Reference](documentation/internal_reference.md). Here we will look at predefinied node types.
+## 6. Storage
 
-### Instance Type
+Instancing supplies read-only parameters from the caller. **Storage** is the
+other half: it gives a subtree a private block of *mutable, cache-owned*
+memory that persists frame to frame — the mechanism needed for state such as
+"is this button currently pressed".
 
-``arb_instance_type`` sets instance for it's subtree. Single childed. Data is pointer to arbitrary instance structure.
-See instancing to learn more.
+- `arb_storage_type` allocates a block of `data` bytes (the size is passed
+  as node data, e.g. `sizeof(button_storage)`).
+- Any node under it can add `arb_flag_storaged_data` and supply
+  `offsetof(storage_struct, field)` instead of a normal data pointer — the
+  same offset mechanism as instancing, but reading from *storage* instead of
+  the *instance*.
+- Cursor/layout/render callbacks all receive `storage_data` directly, so
+  application code (e.g. a cursor handler) can read and mutate it in place
+  without going through the offset mechanism at all.
 
-### Invalidation Type
+The allocated memory block persists across frames. When first allocated,
+the block is zero-initialized.
 
-``arb_invalidation_type`` blocks regeneration of subtree' layout. Single childed. Invalidation type data shall be of type:
+## 7. Invalidation
+
+Layout is not free, and most of a tree does not change from one frame to
+the next. `arb_invalidation_type` is a single-childed gate placed above a
+subtree: the subtree's layout is only rebuilt when the invalidation node is
+marked with a relevant dirty flag; otherwise the previous frame's layout
+results for that subtree are reused unchanged.
 
 ```c
 typedef struct arb_invalidation_data {
-    arb_invalidation_flag flag_consumable;
-    arb_invalidation_flag flag_always;
+    arb_invalidation_flag* flag_always_ptr;         // Nullable
+    arb_invalidation_flag* flag_consumable_ptr;     // Nullable
 } arb_invalidation_data;
-```
 
-``flag_always`` tells interpreter which pass shall always occur (width measure, height distribute, etc). Note that enabling width measure, will also cause width distribute, which would call following passes.
-
-``flag_consumable`` is one time regenerate flag - can be used by application to require relayout, when for example, list item was removed or, text changed. Once relayout the flag is set to ``arb_invalidation_flag_none``.
-
-```c
 typedef enum arb_invalidation_flag {
     arb_invalidation_flag_text              = 63,
     arb_invalidation_flag_width_measure     = 62,
@@ -234,229 +285,140 @@ typedef enum arb_invalidation_flag {
 } arb_invalidation_flag;
 ```
 
-### Indirect Type
+Both pointers are nullable and serve different purposes:
 
-``arb_indirect_type`` causes interpreter to jump to ``arb_node`` at this node data.
-Allows adding container children, linking multiple nodes arrays. With instancing allows adding children to structures
-This is a special case of instancing - 
+- `flag_always_ptr` points to a flag that is checked every frame but never
+  cleared by the engine. It is meant for subtrees whose relayout condition
+  is itself persistent state the application manages elsewhere.
+- `flag_consumable_ptr` points to a flag that is checked once, and if it
+  triggers a pass, is reset to `arb_invalidation_flag_none` automatically
+  afterward. It is meant for one-shot triggers: "the text changed, relayout
+  once," without the application needing to remember to clear the flag.
+
+The flag values are ordered by pipeline stage. Enabling an earlier stage
+also causes every later stage to run: setting `arb_invalidation_flag_text`
+implies text layout, which invalidates measured width, which cascades
+through width distribution, height measurement, height distribution, and
+position, since each later stage depends on the outputs of the one before
+it. `arb_invalidation_flag_all` runs every stage; `arb_invalidation_flag_none`
+runs none.
+
+## 8. Worked Example: Button
+
+The button prefab combines instancing (the caller's styling and callbacks)
+with storage (the button's own pressed/idle state) and the cursor system.
+
+**Public data — what a caller instances the structure with:**
 
 ```c
-typedef struct instance_data {
-    const arb_node* child_to_structure;
-} instance_data;
-
-...
-
-ARB_INST(&(instance_data){
-    .child_to_structure = some array of nodes
-}),
-ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(instance_data, child_to_structure))
+typedef struct arb_button_data {
+    void*           payload;
+    arb_button_func on_clicked;
+    arb_button_func on_released;
+    arb_button_func on_held;
+    arb_box_data    default_style;
+    arb_box_data    hovered_style;
+    arb_box_data    pressed_style;
+    const arb_node* child;
+} arb_button_data;
 ```
 
-The interpreter now reads child_to_structure from instance contents as a indirect type child
+**Private state — what the button keeps for itself, invisible to the caller:**
 
-### Depth Type
-
-``arb_depth_type`` allows altering depth of subtree. Single childed, data type:
 ```c
-typedef struct arb_depth_data {
-    short depth_change;
-} arb_depth_data;
-```
-Decreasing depth means going 'into' the screen
-Depth alters order of render and cursor detection.
-
-### Box Type
-
-``arb_box_type`` is a box rendering primitive. Single childed, data type:
-```c
-typedef struct arb_box_data {
-    arb_color       tint;       // box color
-    const char*     image;      // image name/path, may be NULL
-    float           rounding;   // pixel corner rounding radius
-    uint32_t        shader;     // shader effect index
-} arb_box_data;
-```
-Meaning of shader is up to renderer implementation.
-Image path is also up to renderer.
-
-### Text Type
-
-``arb_text_type`` is a text rendering primitive. Single childed, data type:
-```c
-typedef struct arb_text_data {
-    unsigned int    size;       // font size
-    const char*     font;       // font name/path
-    const char*     text;       // text pointer
-    arb_color       tint;       // text color modyficator
-    uint32_t        shader;     // shader effect index
-} arb_text_data;
-```
-Meaning of shader is up to renderer implementation.
-Font path is also up to renderer.
-Note renderer also handles text layout - therefore utf support is up to implementation.
-
-### Overlay Type
-
-``arb_overlay_type`` - layouts children one on another. The first child is deepest, rendered first, No data, array children.
-
-### Padding Type
-
-``arb_padding_type`` - padds child inside self. Data is arb_padding_data, single childed.
-```c
-typedef struct arb_padding_data {
-    arb_length left, right, top, bottom;
-} arb_padding_data;
+typedef struct button_storage {
+    int          pressed;
+    arb_box_data current;
+} button_storage;
 ```
 
-### Row Type
+**The cursor handler** reads and writes storage directly, and reads the
+instance data as an ordinary pointer (it is handed `node_data` and
+`storage_data` already resolved — no offset math is needed at this level):
 
-``arb_row_type`` - layouts children in a row, left to right, data is arb_row_data, array children:
 ```c
-typedef struct arb_row_data {
-    float           vertical_align;     // 0 - align top,  0.5 - align center, 1.0 - align bottom, other values also work
-    arb_length      spacing;            // spacing between children
-} arb_row_data;
+static void button_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
+    arb_button_data* data = node_data;
+    button_storage*  stor = storage_data;
+    // ... reads data->on_clicked / data->pressed_style etc,
+    //     writes stor->pressed / stor->current
+}
 ```
 
-### Column Type
-
-``arb_column_type`` - layouts children in a column, top to down, data is arb_column_data, array children:
-```c
-typedef struct arb_column_data {
-    float           horizontal_align;   // 0 - align left,  0.5 - align center, 1.0 - align right, other values also work
-    arb_length      spacing;            // spacing between children
-} arb_column_data;
-```
-
-### Sizebox Type
-
-``arb_sizebox_type`` - ovewrites selected child measures, single childed, data shall be arb_sizebox_data pointer:
-```c
-typedef enum arb_sizebox_overwrite_flag {
-    arb_sizebox_overwrite_none        = 0,
-    arb_sizebox_overwrite_all         = 255,
-    arb_sizebox_overwrite_all_width   = 7,
-    arb_sizebox_overwrite_all_height  = 56,
-
-    arb_sizebox_overwrite_width_min   = 1 << 0,
-    arb_sizebox_overwrite_width_max   = 1 << 1,
-    arb_sizebox_overwrite_width_flex  = 1 << 2,
-
-    arb_sizebox_overwrite_height_min  = 1 << 3,
-    arb_sizebox_overwrite_height_max  = 1 << 4,
-    arb_sizebox_overwrite_height_flex = 1 << 5
-} arb_sizebox_overwrite_flag;
-typedef struct arb_sizebox_data {
-    arb_sizebox_overwrite_flag  flag;
-    arb_length                  width;
-    arb_length                  height;    
-} arb_sizebox_data;
-```
-
-## Instancing
-
-Instancing mechanism allows defining a UI prefabs, parametrised by instance data. Example:
+**The structure itself:**
 
 ```c
-
-typedef struct inventory_slot_data {
-    arb_box_data slot_content;
-} inventory_slot_data;
-
-arb_node inventory_slot[] = {
-    ARB_NODE(arb_sizebox_type, arb_flag_none, &(arb_sizebox_data){
-        .flag   = arb_sizebox_overwrite_all,
-        .width  = (arb_length){80, 80, 1},
-        .height = (arb_length){80, 80, 1},
-    }),
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_box_data){
-        .tint = ARB_HEX("#909390"), .rounding = 8
-    }),
-    ARB_PADD(4),
-    ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 
-        offsetof(inventory_slot_data, slot_content) // Pull box data from inventory slot data
-    ),
-    ARB_LAST
-};
-
-arb_node inventory_row[] = {
-    ARB_NODE(arb_row_type, arb_flag_none, &(arb_row_data){
-        .vertical_align = 0.5, .spacing = (arb_length){0, 20, 1}}
-    ),
-    ARB_ELEM(
-        ARB_INST(&(inventory_slot_data){
-            .slot_content.image = "apple.png",
-            .slot_content.tint = ARB_HEX("#FF0000")
-        }),
-        ARB_IDIR(inventory_slot)
-    ),
-    ARB_ELEM(
-        ARB_INST(&(inventory_slot_data){
-            .slot_content.image = "sword.png",
-            .slot_content.tint = ARB_HEX("#00FF00")
-        }),
-        ARB_IDIR(inventory_slot)
-    ),
-    ARB_ELEM(
-        ARB_INST(&(inventory_slot_data){
-            .slot_content.image = "pickaxe.png",
-            .slot_content.tint = ARB_HEX("#0000FF")
-        }),
-        ARB_IDIR(inventory_slot)
-    ),
-    ARB_LAST
+const arb_node arb_button_structure[] = {
+    ARB_NODE(arb_storage_type,       arb_flag_none, sizeof(button_storage)),
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, button_cursor_func),
+    ARB_NODE(arb_cursor_call_type,   arb_flag_instanced_data, 0),
+    ARB_NODE(arb_box_type, arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        offsetof(button_storage, current)),
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(arb_button_data, child))
 };
 ```
 
-In this example we can see ``inventory_slot`` being parametrised structure - it's last box pulls it's style from ``inventory slot data``.
-This feature is enabled by ``arb_flag_instanced_data`` flag and works with every node type. The data of a instanced node must be set to offset of read member within instance structure. The instance structure is set for subtree by ``arb_instance_node`` or by ``ARB_INST`` shortcut macro.
+Reading it as a branch, top to bottom:
 
-Worth noting: instance nodes can also be instanced - therefore instance of it's subtree would be higher instance + offset in lower instance.
-This may be usefull when defining for example structure like that:
+1. `arb_storage_type` opens `sizeof(button_storage)` bytes of persistent
+   memory for everything below it — this is where `pressed` and `current`
+   live from now on.
+2. `arb_cursor_handle_type` registers `button_cursor_func` as the callback
+   that fires for cursor input anywhere in this subtree.
+3. `arb_cursor_call_type` is the actual hit-testable input node. Its data is
+   `arb_flag_instanced_data` with offset `0`, which causes the `data`
+   pointer passed to the cursor callback to be the instance struct itself
+   (instance pointer + 0 = instance pointer).
+4. The **box** is the visible part of the button. It uses
+   `arb_flag_storaged_data` to pull `current` out of storage — so its color
+   is whatever the cursor handler last decided (idle/hovered/pressed style),
+   not something set once by the caller.
+5. Finally, an `arb_indirect_type` with `arb_flag_instanced_data` reads
+   `offsetof(arb_button_data, child)` — this is the child-injection pattern
+   described in *Instancing*: the caller's `data->child` branch is spliced
+   in as this node's child, letting a button wrap arbitrary caller content
+   (a label, an icon, ...).
+
+This example demonstrates most of Arbor's mechanisms working together.
+
+## 9. Good Practices
+
+A larger example ties these mechanisms together in a way worth analyzing
+directly:
 
 ```c
-typedef struct inventory_slot_data {
-    arb_box_data        slot_contents;
-} inventory_slot_data;
+arb_box_data bg_style = { .tint = ARB_HEX("#373030") };
+arb_box_data fg_style = { .tint = ARB_HEX("#5e5050"), .rounding = 16 };
 
-typedef struct inventory_row_data {
-    arb_text_data       row_title;
-    inventory_slot_data slots[8];
-} inventory_row_data;
-```
-
-Then row structure would read ``inventory_row_data`` and frame particular slot data for children slot.
-
-Instancing mechanism also allows injection children to structure as, ``arb_indirect_type`` can be instanced:
-
-```c
-typedef struct scrollbox_data {
-    arb_node* scrolled_child;
-} scrollbox_data;
-
-// Somewhere in instanced with scrollbox_data scrollbox structure
-ARB_NODE(
-    arb_indirect_type, arb_flag_instanced_data, offsetof(scrollbox_data, scrolled_child)
-)
-```
-
-## Custom Types
-
-Arbor enables user to create custom node types. Node type is accessed by node via pointer, so it can be definied in header as extern:
-```c
-extern const arb_type custom_type;
-```
-
-In implementation:
-```c
-const arb_type custom_type = {
-    // set fields definied in header
+arb_text_data tx_data = {
+    .size = 24, .font = "Roboto", .tint = ARB_HEX("#b7b0b0"), .text = "Select Text",
 };
+
+arb_invalidation_flag text_invalidation_flag = arb_invalidation_flag_all;
+
+void button_set_text_func(void* payload) {
+    tx_data.text = (const char*)payload;
+    text_invalidation_flag = arb_invalidation_flag_text; // Regenerate text
+}
 ```
 
-Arbor.h definied type contents and functions - this is long definition, not worth coping here.
-Importants notes:
-- Node type does not have to declare all functions - each of them can be left NUll - if so, no function will be called.
-- Layout steps shall use only information avaible at this step, eg width distribute shall only use given width, and children measured widths, no height, those preinitalised reads are undefinied
-- type->array_child switch whether node is single childed or array childed, as definied above in this document
+Several habits are worth naming explicitly:
+
+- **Trees are templates, not state.** The `arb_node` arrays themselves can stay `const` and ``static`` —
+  they describe structure, not content. Anything that actually needs to
+  change frame to frame (`tx_data.text` above) lives in ordinary externally
+  declared memory the tree points to, not inside the tree itself.
+- **Pair mutable state with an invalidation flag.** `tx_data` and
+  `text_invalidation_flag` are declared together and updated together:
+  `button_set_text_func` mutates the data first, then sets the consumable
+  flag so the cache knows to redo exactly the affected pass on the next
+  update. Mutating data that a tree points to is only meaningful once the
+  corresponding invalidation flag is raised.
+- **Share style data by pointer.** `bg_style` and `fg_style` are each
+  declared once and pointed to from wherever that style is needed — since
+  node data is just a pointer, nothing prevents many unrelated nodes from
+  reading the same style struct.
+- **Decouple callbacks from data with a generic payload.** A single
+  `button_set_text_func` serves every button in the menu; each instance
+  only supplies a different `payload` pointer. This avoids writing one
+  callback per button for what is structurally the same action.
