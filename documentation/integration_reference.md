@@ -50,8 +50,8 @@ arb_upload_access arb_cache_update(
 
 ## 3. Multithreading & Synchronization
 
-`arb_cache` owns all mutable UI state: layout results, text GPU handles,
-storage blocks, and invalidation flags all live inside the cache instance.
+`arb_cache` owns all mutable UI state: layout results, text GPU handles and
+storage blocks all live inside the cache instance.
 
 - A single `arb_cache` is not internally synchronized. Concurrent calls to
   `arb_cache_update` on the same cache, or concurrent access to a
