@@ -2654,7 +2654,7 @@ static void horizontal_scrollbox_transform_func(
     scrollbox_storage* stor = storage_data;
 
     // Calculate offset
-    int offset_to_align = -stor->content_pixels / 2;  // start offseting from align - hardcoded left
+    int offset_to_align = stor->content_pixels / 2;  // start offseting from align - hardcoded left
     int total_offset    = offset_to_align + stor->position;
 
     // No scrolling needed
