@@ -28,6 +28,16 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | [Types Reference](documentation/types_reference.md) | Learn how to define custom Arbor node type, for custom behavior |
 | [Integration Reference](documentation/integration_reference.md)| Learn how to integrate and render Arbor with your engine/renderer. |
 
+Also a little OpenGL renderer is provided - compile:
+
+```
+C files:    example/main.c, example/renderer.c, example/deps/glad.c
+Libraries:  -lglfw, -lGL, -lm
+```
+
+This example allows user to test layouting system, but have limitation of only one font, and no images.
+More advanced renderer linked in ``integration reference``.
+
 ## Building
 
 Include `arbor.h` in your project.
