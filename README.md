@@ -6,6 +6,11 @@ It allows retained layout generation, with immediate animations. Thanks to *inst
 
 Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted lists of rendering primitives, your renderer can consume.
 
+## Examples
+
+![Example Text Viewer App](/example/rendered.png)
+*Example text viewer app (I promise this system can so much more, it is just fresh, nothing cool to show yet)*
+
 ## Features
 
 | Feature | Gain |
