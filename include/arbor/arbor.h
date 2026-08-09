@@ -44,10 +44,14 @@ typedef struct arb_cache  arb_cache;
 // ===========================
 // Layout Length
 
-// variable representing infinte length
+// Value representing infinte length
 // not set to int max, to avoid overflows in implementation
 // needs to be increased if you are rendering on a (64+)K screen
-const static int arb_inf_length = 64 * 1000;
+#define ARB_INF_LENGTH (64 * 1000)
+
+// Infinitely small flex
+// Usefull for spacing that should collapse first
+#define ARB_EPS_FLEX (1.0f / 1e9)
 
 // structure representing 1d length
 // min  - minimal size element can be rendered with
@@ -1318,7 +1322,7 @@ BOTTOM_UP_DFS(
         current->value_state.measured_width.flex = 1.0f;
     }
     if (current->key.node->flags & arb_flag_ignore_max_width) {
-        current->value_state.measured_width.max  = arb_inf_length;
+        current->value_state.measured_width.max  = ARB_INF_LENGTH;
         current->value_state.measured_width.flex = 1.0f;
     }
 );
@@ -1341,7 +1345,7 @@ BOTTOM_UP_DFS(
         current->value_state.measured_height.flex = 1.0f;
     }
     if (current->key.node->flags & arb_flag_ignore_max_height) {
-        current->value_state.measured_height.max  = arb_inf_length;
+        current->value_state.measured_height.max  = ARB_INF_LENGTH;
         current->value_state.measured_height.flex = 1.0f;
     }
 );
@@ -2103,8 +2107,8 @@ void row_width_measure(
     size_t spaces = children_count ? children_count - 1 : 0;
     own.min += spaces * data->spacing.min;
 
-    if (own.max != arb_inf_length && data->spacing.max != arb_inf_length) own.max += spaces * data->spacing.max;
-    else own.max = arb_inf_length;
+    if (own.max != ARB_INF_LENGTH && data->spacing.max != ARB_INF_LENGTH) own.max += spaces * data->spacing.max;
+    else own.max = ARB_INF_LENGTH;
 
     if (own.min != own.max) own.flex = 1.0f;
     node_state->measured_width = own;
@@ -2232,8 +2236,8 @@ void column_height_measure(
     size_t spaces = children_count ? children_count - 1 : 0;
     own.min += spaces * data->spacing.min;
 
-    if (own.max != arb_inf_length && data->spacing.max != arb_inf_length) own.max += spaces * data->spacing.max;
-    else own.max = arb_inf_length;
+    if (own.max != ARB_INF_LENGTH && data->spacing.max != ARB_INF_LENGTH) own.max += spaces * data->spacing.max;
+    else own.max = ARB_INF_LENGTH;
 
     if (own.min != own.max) own.flex = 1.0f;
     node_state->measured_height = own;
@@ -2618,7 +2622,7 @@ const arb_node arb_vertical_scrollbox_structure[] = {
     {   // Row content-handle
         .type  = &arb_row_type,
         .data  = &(arb_row_data){
-            .spacing        = (arb_length){16, arb_inf_length, 1},
+            .spacing        = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
             .vertical_align = 0.5
         }
     },
@@ -2852,7 +2856,7 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
     {   // Column content-handle
         .type  = &arb_column_type,
         .data  = &(arb_column_data){
-            .spacing          = (arb_length){16, arb_inf_length, 1},
+            .spacing          = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
             .horizontal_align = 0.5
         }
     },

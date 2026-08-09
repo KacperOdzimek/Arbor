@@ -6,6 +6,11 @@ It allows retained layout generation, with immediate animations. Thanks to *inst
 
 Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted lists of rendering primitives, your renderer can consume.
 
+## Examples
+
+![Example Text Viewer App](/example/rendered.png)
+*Example text viewer app (I promise this system can so much more, it is just fresh, nothing cool to show yet)*
+
 ## Features
 
 | Feature | Gain |
@@ -27,6 +32,16 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | [Contents Reference](documentation/contents_reference.md) | Learn Arbor node types and UI prefabs. |
 | [Types Reference](documentation/types_reference.md) | Learn how to define custom Arbor node type, for custom behavior |
 | [Integration Reference](documentation/integration_reference.md)| Learn how to integrate and render Arbor with your engine/renderer. |
+
+Also a little OpenGL renderer is provided - compile:
+
+```
+C files:    example/main.c, example/renderer.c, example/deps/glad.c
+Libraries:  -lglfw, -lGL, -lm
+```
+
+This example allows user to test layouting system, but have limitation of only one font, and no images.
+More advanced renderer linked in ``integration reference``.
 
 ## Building
 
