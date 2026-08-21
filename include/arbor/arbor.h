@@ -139,6 +139,8 @@ typedef struct arb_cursor_state {
 } arb_cursor_state;
 
 typedef struct arb_node_cursor_input {
+    int                     resolution_x;       // Resolution width pixels
+    int                     resolution_y;       // Resolution height pixels
     arb_cursor_state*       mutable_state;      // State with fields possibly consumed by previous handles  
     const arb_cursor_state* raw_state;          // Untouched state
     const arb_cursor_state* prev_raw_state;     // Previous frame raw state
@@ -542,18 +544,19 @@ typedef struct arb_clipbox_request {
 } arb_clipbox_request;
 
 typedef struct arb_draw_request {
-    arb_mat3x2  transform;          // Drawn box transform
-    int         clip_index;         // Clip index from clipboxes requests, -1 means no clip
-    short       depth_index;        // Depth index
-    char        is_box_not_text;    // Whether to read union.box or union.text
+    arb_mat3x2                      transform;      // Drawn box transform
+    int                             clip_index;     // Clip index from clipboxes requests, -1 means no clip
+    short                           depth_index;    // Depth index
+    const arb_node_layout_state*    layout;         // Layout for extra info
+    char is_box_not_text;                           // Whether to read union.box or union.text
     union {
         struct {
-            arb_box_data    data;   // Rendered box data
-        } box;
+            arb_box_data    data;                   // Rendered box data
+        } box;                                      // Per box data
         struct {
-            void**          pointer;// Text renderer-handle storage variable pointer
-            arb_text_data   data;   // Rendered text data
-        } text;
+            void**          pointer;                // Text renderer-handle storage variable pointer
+            arb_text_data   data;                   // Rendered text data
+        } text;                                     // Per text box data
     };
 } arb_draw_request;
 
@@ -1450,6 +1453,7 @@ static void render_dfs(
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
+            .layout             = &own->value_state,
             .is_box_not_text    = 1,
             .box.data           = (arb_box_data){
                 .image  = NULL,
@@ -1467,6 +1471,7 @@ static void render_dfs(
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
+            .layout             = &own->value_state,
             .is_box_not_text    = 1,
             .box.data           = *bdata
         });
@@ -1479,6 +1484,7 @@ static void render_dfs(
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
+            .layout             = &own->value_state,
             .is_box_not_text    = 0,
             .text.pointer       = &text_cache->allocation,
             .text.data          = *tdata
@@ -1613,6 +1619,8 @@ arb_upload_access arb_cache_update(
     // Do cursor input callbacks, walking from topmost to deepest
     arb_cursor_state changable_state = cursor_state;
     arb_node_cursor_input input_data = {
+        .resolution_x   = cache->resolution_x,
+        .resolution_y   = cache->resolution_y,
         .mutable_state  = &changable_state,
         .raw_state      = &cursor_state,
         .prev_raw_state = &cache->previous_frame_cursor_state,
