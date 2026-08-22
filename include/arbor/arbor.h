@@ -1156,7 +1156,9 @@ static inline void caches_walk_order_push(caches_walk_order* walk_order, cache_s
             if (new_sto) free(new_sto); else free(walk_order->storages);
             if (new_sts) free(new_sts); else free(walk_order->states);
             if (new_sub) free(new_sub); else free(walk_order->subtree);
-            walk_order->position = 0; walk_order->capacity = 0;
+            *walk_order = (caches_walk_order){ // Zero everything keep cache
+                .cache = walk_order->cache
+            }; 
             longjmp(walk_order->cache->emergency, emergency_jump_flag_allocation_failure);
         }
 
@@ -1642,7 +1644,7 @@ arb_upload_access arb_cache_update(
 
         input_data.hovered     = cursor_inside && !ever_was_inside;
         input_data.raw_hovered = cursor_inside;
-        if (ibox.handle) ibox->handle(
+        if (ibox->handle) ibox->handle(
             get_node_data(ibox->owner.node, ibox->owner.instance, ibox->storage), 
             safe_storage_slot_get_allocation(ibox->storage), &input_data
         );
