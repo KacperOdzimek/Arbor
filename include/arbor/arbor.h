@@ -1172,16 +1172,15 @@ static inline void caches_walk_order_push(caches_walk_order* walk_order, cache_s
     walk_order->slots   [walk_order->position] = slot;
     walk_order->storages[walk_order->position] = storage_slot,
     walk_order->states  [walk_order->position] = &slot->value_state;
-    walk_order->subtree [walk_order->position] = 1; // included node itself
+    walk_order->subtree [walk_order->position] = 0;
     walk_order->position++;
 }
 
 // Pushes all child nodes caches of node to caches_walk_order
-// Recurse into children left to right
-void caches_walk_dfs(
+// Recurse into children left to right; Retuns subtree size
+size_t caches_walk_dfs(
     caches_walk_order*  walk_order, 
     cache_slot*         current, 
-    size_t*             subtree_size_target, 
     const void*         instance,
     storage_cache_slot* storage
 ) {
@@ -1212,12 +1211,14 @@ void caches_walk_dfs(
 
     // Recurse
     size_t begin_pos = walk_order->position - count;
+    size_t subtree = 1; // This node itself
     for (size_t i = 0; i < count; i++) {
-        caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], &walk_order->subtree[begin_pos + i], instance, storage);
-        *subtree_size_target += walk_order->subtree[begin_pos + i];
+        walk_order->subtree[begin_pos + i] = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, storage);
+        subtree += walk_order->subtree[begin_pos + i];  // This subtree = Self + All children subtrees
     }
 
     current->value_child_count = count;
+    return subtree;
 }
 
 // Generic layout dfs generation macros
@@ -1669,8 +1670,7 @@ arb_upload_access arb_cache_update(
         root_cache->value_state.given_height = resolution_y;
 
         // Find walk order
-        size_t root_subtree  = 1; // root itself included
-        caches_walk_dfs(&walk_order, root_cache, &root_subtree, NULL, NULL);
+        size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL);
         
         // Perform all passes
         text_gen_dfs(&walk_order, root_cache, NULL, 0);
