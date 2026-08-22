@@ -255,11 +255,11 @@ typedef enum arb_flag {
 
 typedef struct arb_node {
     const arb_type* type;
-    const uint32_t  flags;
+    uint32_t        flags;
 
     union {
         const void*  data;
-        const size_t data_offset;
+        size_t       data_offset;
     };
 } arb_node;
 
@@ -1197,13 +1197,15 @@ void caches_walk_dfs(
         storage = storage_cache_hashmap_get(walk_order->cache, current->key);   // Get without alloc, as alloc happen in render
     }
 
-    if (!node->type->array_child && child) {
-        cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
-        caches_walk_order_push(walk_order, child_slot, storage); count++;
-    }
-    else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
-        cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
-        caches_walk_order_push(walk_order, child_slot, storage); count++;
+    if (node->type) {
+        if (!node->type->array_child && child) {
+            cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
+            caches_walk_order_push(walk_order, child_slot, storage); count++;
+        }
+        else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
+            cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
+            caches_walk_order_push(walk_order, child_slot, storage); count++;
+        }
     }
 
     // Recurse
@@ -1423,6 +1425,8 @@ static void render_dfs(
     arb_mat3x2                      transform, 
     const render_dfs_subtree_state* state
 ) {
+    // At ARB_LAST node
+    if (node->type == NULL) return;
     node_stable_index index = {node, state->instance};
 
     // get node data
@@ -1630,7 +1634,6 @@ arb_upload_access arb_cache_update(
     int ever_was_inside = 0;
     if (cache->cursor_input_boxes_count) for (size_t i = cache->cursor_input_boxes_count - 1; ; i--) {
         cursor_input_box* ibox = &cache->cursor_input_boxes[i];
-        if (!ibox->handle) continue; // nothing to call
 
         int cursor_inside  = is_point_in_transformed_box(ibox->box_transform, norm_cursor_x, norm_cursor_y);
         if (ibox->clip_index != -1) {
@@ -1639,7 +1642,7 @@ arb_upload_access arb_cache_update(
 
         input_data.hovered     = cursor_inside && !ever_was_inside;
         input_data.raw_hovered = cursor_inside;
-        ibox->handle(
+        if (ibox.handle) ibox->handle(
             get_node_data(ibox->owner.node, ibox->owner.instance, ibox->storage), 
             safe_storage_slot_get_allocation(ibox->storage), &input_data
         );
