@@ -1213,7 +1213,8 @@ size_t caches_walk_dfs(
     size_t begin_pos = walk_order->position - count;
     size_t subtree = 1; // This node itself
     for (size_t i = 0; i < count; i++) {
-        walk_order->subtree[begin_pos + i] = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, storage);
+        size_t children_subtree = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, storage);
+        walk_order->subtree[begin_pos + i] = children_subtree; // Enforce caches_walk_dfs evaluaton before LHS
         subtree += walk_order->subtree[begin_pos + i];  // This subtree = Self + All children subtrees
     }
 
