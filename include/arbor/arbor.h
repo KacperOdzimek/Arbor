@@ -252,12 +252,13 @@ typedef enum arb_flag {
     arb_flag_none               = 0,
     arb_flag_instanced_data     = 1 << 0,   // This node data = instance + data_offset, prioritized over arb_flag_storaged_data
     arb_flag_storaged_data      = 1 << 1,   // This node data = storage  + data_offset 
-    arb_flag_ignore_min_width   = 1 << 2,   // Min width  of this node is set to 0
-    arb_flag_ignore_min_height  = 1 << 3,   // Min height of this node is set to 0
-    arb_flag_ignore_max_width   = 1 << 4,   // Max width  of this node is set to inf
-    arb_flag_ignore_max_height  = 1 << 5,   // Max height of this node is set to inf
-    arb_flag_clipbox            = 1 << 6,   // Children of this node on render are clipped to this node boundary
-    arb_flag_pink_box           = 1 << 7,   // Render pink box in node boundary - for debugging
+    arb_flag_indirected_data    = 1 << 2,   // (After other data flags) This node data = *(node data pointer as double pointer)
+    arb_flag_ignore_min_width   = 1 << 3,   // Min width  of this node is set to 0
+    arb_flag_ignore_min_height  = 1 << 4,   // Min height of this node is set to 0
+    arb_flag_ignore_max_width   = 1 << 5,   // Max width  of this node is set to inf
+    arb_flag_ignore_max_height  = 1 << 6,   // Max height of this node is set to inf
+    arb_flag_clipbox            = 1 << 7,   // Children of this node on render are clipped to this node boundary
+    arb_flag_pink_box           = 1 << 8,   // Render pink box in node boundary - for debugging
 } arb_flag;
 
 typedef struct arb_node {
@@ -953,16 +954,22 @@ DEFINE_HASHMAP_FUNCS(storage_cache, storage_cache_slot, storage_cache_slots, sto
 
 static void* safe_storage_slot_get_allocation(storage_cache_slot* slot);
 static inline const void* get_node_data(const arb_node* node, const char* instance, storage_cache_slot* storage) {
-    if (node->flags & arb_flag_instanced_data) return (void*)(instance + node->data_offset);
-    if (node->flags & arb_flag_storaged_data)  return (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
-    return node->data;
+    const void* data = NULL;
+
+    // 1) Dispatch data by source
+    if      (node->flags & arb_flag_instanced_data) data = (void*)(instance + node->data_offset);
+    else if (node->flags & arb_flag_storaged_data)  data = (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
+    else                                            data = node->data;
+
+    // 2) If indirected, walk one more pointer
+    if (node->flags & arb_flag_indirected_data && data) data = *((void**)data); 
+
+    return data;
 }
 
 static inline const arb_node* get_node_child(const arb_node* node, const char* instance, storage_cache_slot* storage) {
     if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
-        if (node->flags & arb_flag_instanced_data) return *(const arb_node**)(instance + node->data_offset);
-        if (node->flags & arb_flag_storaged_data)  return *(const arb_node**)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
-        else return node->data;
+        return get_node_data(node, instance, storage);
     }
 
     // By default next child is next in memory
@@ -2420,7 +2427,7 @@ const arb_node arb_button_structure[] = {
     ARB_NODE(arb_cursor_handle_type, arb_flag_none, button_cursor_func),
     ARB_NODE(arb_cursor_call_type,   arb_flag_instanced_data, 0),
     ARB_NODE(arb_box_type, arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height, offsetof(button_storage, current)),
-    ARB_NODE(arb_indirect_type, arb_flag_instanced_data, offsetof(arb_button_data, child))
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_button_data, child))
 };
 
 // ===========================
@@ -2612,7 +2619,7 @@ const arb_node vertical_scrollbox_main_body[] = {
     },
     {   // Child
         .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data,
+        .flags = arb_flag_instanced_data | arb_flag_indirected_data,
         .data_offset = offsetof(arb_scrollbox_data, child)
     }
 };
@@ -2852,7 +2859,7 @@ const arb_node horizontal_scrollbox_main_body[] = {
     },
     {   // Child
         .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data,
+        .flags = arb_flag_instanced_data | arb_flag_indirected_data,
         .data_offset = offsetof(arb_scrollbox_data, child)
     }
 };
