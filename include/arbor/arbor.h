@@ -150,39 +150,46 @@ typedef struct arb_node_cursor_input {
 } arb_node_cursor_input;
 
 // ===========================
-// Node Typedefs
+// Node Layout
 
 typedef struct arb_node_layout_state {
-    arb_length              measured_width;     // Desired width  of this node
-    arb_length              measured_height;    // Desired height of this node
-    int                     given_width;        // Received width
-    int                     given_height;       // Received height
-    int                     hori_offset;        // Node center horizontal offset from parent center
-    int                     vert_offset;        // Node center vertical offset from parent center
+    arb_length  measured_width;     // Desired width  of this node
+    arb_length  measured_height;    // Desired height of this node
+    int         given_width;        // Received width
+    int         given_height;       // Received height
+    int         hori_offset;        // Node center horizontal offset from parent center
+    int         vert_offset;        // Node center vertical offset from parent center
 } arb_node_layout_state;
 
+// ===========================
+// Node Typedefs
+
 typedef void(arb_node_layout_func_signature)(
-    const void*             node_data,          // Node data
-    void*                   storage_data,       // Storage data
-    arb_node_layout_state*  node_state,         // Node own state
-    size_t                  children_count,     // Node children count
-    arb_node_layout_state** children_states     // Node children states
+    const void*                     node_data,          // Node data
+    void*                           storage_data,       // Storage data
+    arb_node_layout_state*          node_state,         // Node own state
+    size_t                          children_count,     // Node children count
+    arb_node_layout_state**         children_states     // Node children states
 );
 typedef arb_node_layout_func_signature* arb_node_layout_func;
 
 typedef void(arb_node_render_func_signature)(
-    const void*             node_data,          // Node data
-    void*                   storage_data,       // Storage data
-    arb_mat3x2*             transform,          // Given transform, can be changed
-    int                     resolution_x,       // Screen resolution x
-    int                     resolution_y        // Screen resolution y
+    const void*                     node_data,          // Node data
+    void*                           storage_data,       // Storage data
+    arb_mat3x2*                     transform,          // Given transform, can be changed
+    const arb_node_layout_state*    layout,             // Node layout state for info
+    int                             resolution_x,       // Screen resolution x
+    int                             resolution_y        // Screen resolution y
 );
 typedef arb_node_render_func_signature* arb_node_render_func;
 
 typedef void(arb_node_cursor_func_signature)(
-    const void*             node_data,          // Node data
-    void*                   storage_data,       // Storage data
-    arb_node_cursor_input*  node_input          // Cursor input
+    const void*                     node_data,          // Node data
+    void*                           storage_data,       // Storage data
+    arb_node_cursor_input*          node_input,         // Cursor input
+    const arb_node_layout_state*    layout,             // Node layout state for info
+    int                             resolution_x,       // Screen resolution x
+    int                             resolution_y        // Screen resolution y
 );
 typedef arb_node_cursor_func_signature* arb_node_cursor_func;
 
@@ -1006,6 +1013,7 @@ static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
 typedef struct cursor_input_box {
     node_stable_index       owner;
     arb_node_cursor_func    handle;
+    cache_slot*             slot;
     storage_cache_slot*     storage;
     int                     clip_index;
     short                   depth_index;
@@ -1447,12 +1455,16 @@ static void render_dfs(
 
     // Do transform if method provided
     if (node->type->transform) node->type->transform(
-        data, state->storage_data, &transform, cache->resolution_x, cache->resolution_y
+        data, state->storage_data, &transform,
+        &own->value_state, cache->resolution_x, cache->resolution_y
     );
 
     // Transform from transform call
     if (node->type == &arb_transform_call_type && state->transform_handle) {
-        state->transform_handle(data, state->storage_data, &transform, cache->resolution_x, cache->resolution_y);
+        state->transform_handle(
+            data, state->storage_data, &transform, 
+            &own->value_state, cache->resolution_x, cache->resolution_y
+        );
     }
 
     // Push pinkbox request
@@ -1505,6 +1517,7 @@ static void render_dfs(
         cursor_input_box_cache_push(cache, (cursor_input_box){
             .owner          = index,
             .handle         = node->type->cursor,
+            .slot           = own,
             .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
@@ -1515,6 +1528,7 @@ static void render_dfs(
         cursor_input_box_cache_push(cache, (cursor_input_box){
             .owner          = index,
             .handle         = state->cursor_handle,
+            .slot           = own,
             .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
@@ -1648,7 +1662,8 @@ arb_upload_access arb_cache_update(
         input_data.raw_hovered = cursor_inside;
         if (ibox->handle) ibox->handle(
             get_node_data(ibox->owner.node, ibox->owner.instance, ibox->storage), 
-            safe_storage_slot_get_allocation(ibox->storage), &input_data
+            safe_storage_slot_get_allocation(ibox->storage), &input_data,
+            &ibox->slot->value_state, cache->resolution_x, cache->resolution_y
         );
 
         ever_was_inside |= cursor_inside;
@@ -2366,8 +2381,11 @@ typedef struct button_storage {
     arb_box_data current;
 } button_storage;
 
-static void button_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
-    arb_button_data* data = node_data;
+static void button_cursor_func(
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
+) {
+    const arb_button_data* data = node_data;
     button_storage*  stor = storage_data;
 
     arb_cursor_state crr = *node_input->mutable_state;
@@ -2422,8 +2440,11 @@ typedef struct scrollbox_storage {
 
 static const float scroll_speed_vertical = 2500;
 
-static void vertical_scrollbox_scroll_cursor_func(void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
-    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+static void vertical_scrollbox_scroll_cursor_func(
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
+) {
+    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
         stor->position -= pixel_change;
@@ -2431,7 +2452,8 @@ static void vertical_scrollbox_scroll_cursor_func(void* node_data, void* storage
 }
 
 static void vertical_scrollbox_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+    const void* node_data, void* storage_data, arb_mat3x2* transform,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
@@ -2488,7 +2510,8 @@ static const arb_type vertical_scrollbox_scroller_type = {
 };
 
 static void vertical_scrollbox_handle_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+    const void* node_data, void* storage_data, arb_mat3x2* transform,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
     scrollbox_storage* stor = storage_data;
 
@@ -2530,7 +2553,8 @@ static void vertical_scrollbox_handle_transform_func(
 }
 
 static void vertical_scrollbox_handle_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
@@ -2657,9 +2681,10 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 static const float scroll_speed_horizontal = 3500;
 
 static void horizontal_scrollbox_scroll_cursor_func(
-    void* node_data, void* storage_data, arb_node_cursor_input* node_input
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
-    arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
         stor->position += pixel_change;
@@ -2667,7 +2692,8 @@ static void horizontal_scrollbox_scroll_cursor_func(
 }
 
 static void horizontal_scrollbox_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+    const void* node_data, void* storage_data, arb_mat3x2* transform,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
     scrollbox_storage* stor = storage_data;
 
@@ -2724,7 +2750,8 @@ static const arb_type horizontal_scrollbox_scroller_type = {
 };
 
 static void horizontal_scrollbox_handle_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform, int resolution_x, int resolution_y
+    const void* node_data, void* storage_data, arb_mat3x2* transform,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
     scrollbox_storage* stor = storage_data;
 
@@ -2765,7 +2792,10 @@ static void horizontal_scrollbox_handle_transform_func(
     *transform = arb_mat3x2_scale(*transform, sx, 1);
 }
 
-static void horizontal_scrollbox_handle_cursor_func(const void* node_data, void* storage_data, arb_node_cursor_input* node_input) {
+static void horizontal_scrollbox_handle_cursor_func(
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
+) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Reset style
