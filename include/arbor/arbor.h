@@ -464,25 +464,58 @@ extern const arb_type arb_transform_call_type;
 extern const arb_node arb_button_structure[];
 typedef void(arb_button_func_signature)(void* payload); 
 typedef arb_button_func_signature* arb_button_func;
+typedef struct arb_button_style {
+    const arb_box_data*         default_style;
+    const arb_box_data*         hovered_style;
+    const arb_box_data*         pressed_style;
+} arb_button_style;
+typedef struct arb_button_target {
+    arb_button_func             on_clicked;
+    arb_button_func             on_released;
+    arb_button_func             on_held;
+    void*                       payload;
+} arb_button_target;
 typedef struct arb_button_data {
-    void*               payload;
-    arb_button_func     on_clicked;
-    arb_button_func     on_released;
-    arb_button_func     on_held;
-    const arb_box_data* default_style;
-    const arb_box_data* hovered_style;
-    const arb_box_data* pressed_style;
-    const arb_node*     child;
+    const arb_button_style*     style;
+    const arb_button_target*    target;
+    const arb_node*             child;
 } arb_button_data;
 
+// Instance this with arb_scrollbox_data for vertical scrollbox structure
+// This scrollbox will attempt filling entire given space (flex = 1, max = inf)
 extern const arb_node arb_vertical_scrollbox_structure[];
+// Instance this with arb_scrollbox_data for horizontal scrollbox structure
+// This scrollbox will attempt filling entire given space (flex = 1, max = inf)
 extern const arb_node arb_horizontal_scrollbox_structure[];
+typedef struct arb_scrollbox_style {
+    const arb_box_data*         default_style;
+    const arb_box_data*         hovered_style;
+    const arb_box_data*         pressed_style;
+} arb_scrollbox_style;
 typedef struct arb_scrollbox_data {
-    const arb_box_data* default_style;
-    const arb_box_data* hovered_style;
-    const arb_box_data* pressed_style;
-    const arb_node*     child;
+    const arb_scrollbox_style*  style;
+    const arb_node*             child;
 } arb_scrollbox_data;
+
+// Instance this with arb_float_slider_data for customizable, scrollable float value fill-slider
+// This scrollbox will attempt filling entire given space (flex = 1, max = inf)
+extern const arb_node arb_float_slider_structure[];
+typedef struct arb_float_slider_style {
+    int                             is_vertical;        // If vertical slide vertical, else hortizontal
+    int                             is_scroll_disabled; // If true scrolling disabled
+    const arb_box_data*             default_style;      // Slider style default
+    const arb_box_data*             hovered_style;      // Slider style when hovered
+    const arb_box_data*             pressed_style;      // Slider style when pressed
+} arb_float_slider_style;
+typedef struct arb_float_slider_target {
+    float                           min, max;           // Slider range
+    float*                          target;             // Slider storage variable
+} arb_float_slider_target;
+typedef struct arb_float_slider_data {
+    const arb_float_slider_style*   style;              // Slider style
+    const arb_float_slider_target*  target;             // Slider Target
+    const arb_node*                 child;              // Slider Child
+} arb_float_slider_data;
 
 // ===========================
 // Node Shortcuts
@@ -2392,8 +2425,10 @@ static void button_cursor_func(
     const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
     const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
-    const arb_button_data* data = node_data;
-    button_storage*  stor = storage_data;
+    const arb_button_data*   data   = node_data;
+    const arb_button_style*  style  = data->style;
+    const arb_button_target* target = data->target;
+    button_storage*          stor   = storage_data;
 
     arb_cursor_state crr = *node_input->mutable_state;
     arb_cursor_state prv = *node_input->prev_raw_state;
@@ -2403,23 +2438,23 @@ static void button_cursor_func(
 
     if (just_pressed && node_input->hovered) {  // press started
         stor->pressed = 1;
-        stor->current = *data->pressed_style;
-        if (data->on_clicked) data->on_clicked(data->payload);
+        stor->current = *style->pressed_style;
+        if (target->on_clicked) target->on_clicked(target->payload);
         crr.left_down = 0;
     }
     else if (crr.left_down && stor->pressed) {    // held
-        stor->current = *data->pressed_style;
-        if (data->on_held) data->on_held(data->payload);
+        stor->current = *style->pressed_style;
+        if (target->on_held) target->on_held(target->payload);
         crr.left_down = 0;
     }
     else if (just_released && stor->pressed) {   // released
         stor->pressed = 0;
-        if (node_input->hovered) stor->current = *data->hovered_style;
-        else stor->current = *data->default_style;
-        if (data->on_released)  data->on_released(data->payload);
+        if (node_input->hovered) stor->current = *style->hovered_style;
+        else stor->current = *style->default_style;
+        if (target->on_released)  target->on_released(target->payload);
     }
-    else if (node_input->hovered) stor->current = *data->hovered_style;    // hover
-    else stor->current = *data->default_style;  // idle
+    else if (node_input->hovered) stor->current = *style->hovered_style;    // hover
+    else stor->current = *style->default_style;  // idle
 }
 
 const arb_node arb_button_structure[] = {
@@ -2563,13 +2598,15 @@ static void vertical_scrollbox_handle_cursor_func(
     const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
     const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
-    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+    const arb_scrollbox_data*  data  = node_data; 
+    const arb_scrollbox_style* style = data->style;
+    scrollbox_storage*         stor  = storage_data;
 
     // Reset style
-    stor->current_handle_style = *data->default_style;
+    stor->current_handle_style = *style->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = *data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
@@ -2580,7 +2617,7 @@ static void vertical_scrollbox_handle_cursor_func(
             pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
             stor->position -= pixels_change;
-            stor->current_handle_style = *data->pressed_style;
+            stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_y;
             node_input->mutable_state->left_down = 0;   // Consume left click
@@ -2803,13 +2840,15 @@ static void horizontal_scrollbox_handle_cursor_func(
     const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
     const arb_node_layout_state* layout, int resolution_x, int resolution_y
 ) {
-    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+    const arb_scrollbox_data*   data  = node_data; 
+    const arb_scrollbox_style*  style = data->style;
+    scrollbox_storage*          stor  = storage_data;
 
     // Reset style
-    stor->current_handle_style = *data->default_style;
+    stor->current_handle_style = *style->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = *data->hovered_style;
+    if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
     int left_pressed = node_input->mutable_state->left_down;
@@ -2820,7 +2859,7 @@ static void horizontal_scrollbox_handle_cursor_func(
             pixels_change *= (stor->content_pixels / stor->display_pixels); // Calculate pixel movement within content
 
             stor->position += pixels_change;
-            stor->current_handle_style = *data->pressed_style;
+            stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_x;
             node_input->mutable_state->left_down = 0;   // Consume left click
@@ -2920,6 +2959,131 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
         .data = (void*)horizontal_scrollbox_handle,
     },
     ARB_LAST
+};
+
+// ===========================
+// Float Slider
+
+
+typedef struct float_slider_storage {
+    int          is_during_drag;
+    int          last_drag_pixel;  // Raw cursor pixel (x or y, per axis) at last processed frame of the drag
+    arb_box_data current_style;
+} float_slider_storage;
+
+#define FLOAT_SLIDER_SCROLL_SPEED 0.6f  // fraction of (max-min) per second, per unit scroll_delta
+static void float_slider_cursor_func(
+    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
+) {
+    const arb_float_slider_data*   dat = node_data;
+    const arb_float_slider_style*  stl = dat->style;
+    const arb_float_slider_target* tar = dat->target;
+    float_slider_storage*          str = storage_data;
+
+    int pixel_pos = stl->is_vertical ? node_input->mutable_state->position_y : node_input->mutable_state->position_x;
+
+    // Scroll wheel nudges value while hovered, independent of drag/click state
+    if (!stl->is_scroll_disabled && node_input->hovered && dat->target && 
+        tar->max > tar->min && node_input->mutable_state->scroll_delta != 0.0f
+    ) {
+        float value_delta = 
+            node_input->mutable_state->scroll_delta * node_input->delta_time
+            * FLOAT_SLIDER_SCROLL_SPEED * (tar->max - tar->min);
+
+        float new_value = *tar->target + value_delta;
+        if (new_value < tar->min) new_value = tar->min;
+        if (new_value > tar->max) new_value = tar->max;
+        *tar->target = new_value;
+
+        node_input->mutable_state->scroll_delta = 0.0f; // consume, don't leak to nodes underneath
+    }
+
+    int c_left_down = node_input->mutable_state->left_down;
+    int p_left_down = node_input->prev_raw_state->left_down;
+
+    if (!c_left_down) {
+        str->is_during_drag = 0;
+        str->current_style  = node_input->hovered ? *stl->hovered_style : *stl->default_style;
+        return;
+    }
+
+    if (!str->is_during_drag) {
+        if (!(c_left_down && !p_left_down) || !node_input->hovered) return;
+        str->is_during_drag  = 1;
+        str->last_drag_pixel = pixel_pos;
+        str->current_style   = *stl->pressed_style;
+        node_input->mutable_state->left_down = 0;
+        return;
+    }
+
+    str->current_style = *stl->pressed_style;
+
+    if (dat->target && tar->max > tar->min) {
+        int axis_extent = stl->is_vertical ? layout->given_height : layout->given_width;
+        if (axis_extent > 0) {
+            int   pixel_delta  = pixel_pos - str->last_drag_pixel;
+            float signed_delta = (float)(stl->is_vertical ? -pixel_delta : pixel_delta);
+            float value_delta  = signed_delta * (tar->max - tar->min) / (float)axis_extent;
+
+            float new_value = *tar->target + value_delta;
+            if (new_value < tar->min) new_value = tar->min;
+            if (new_value > tar->max) new_value = tar->max;
+            *tar->target = new_value;
+        }
+    }
+
+    str->last_drag_pixel = pixel_pos;
+    node_input->mutable_state->left_down = 0;
+}
+
+static void float_slider_transform_func(
+    const void* node_data, void* storage_data, arb_mat3x2* transform,
+    const arb_node_layout_state* layout, int resolution_x, int resolution_y
+) {
+    const arb_float_slider_data*   dat = node_data;
+    const arb_float_slider_style*  stl = dat->style;
+    const arb_float_slider_target* tar = dat->target;
+
+    float percent = 0.0f;
+    if (tar->max > tar->min && dat->target) {
+        percent = (*tar->target - tar->min) / (tar->max - tar->min);
+        if (percent < 0.0f) percent = 0.0f;
+        if (percent > 1.0f) percent = 1.0f;
+    }
+
+    if (stl->is_vertical) {
+        // Anchor at bottom edge, fill upward with value
+        float extent      = (float)layout->given_height;
+        float offset_px    = (percent - 1.0f) * extent * 0.5f;
+        *transform = arb_mat3x2_scale (*transform, 1.0f, percent);
+        *transform = arb_mat3x2_offset(*transform, 0.0f, 2.0f * offset_px / (float)resolution_y);
+    } else {
+        // Anchor at left edge, fill rightward with value
+        float extent      = (float)layout->given_width;
+        float offset_px    = (percent - 1.0f) * extent * 0.5f;
+        *transform = arb_mat3x2_scale (*transform, percent, 1.0f);
+        *transform = arb_mat3x2_offset(*transform, 2.0f * offset_px / (float)resolution_x, 0.0f);
+    }
+}
+
+const arb_node arb_float_slider_structure[] = {
+    // Push storage
+    ARB_NODE(arb_storage_type, arb_flag_none, sizeof(float_slider_storage)),
+    // Input field taking entire slider space (possibly bigger than the value box)
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, float_slider_cursor_func),
+    ARB_NODE(arb_cursor_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 0),
+    // Transform slider according to percent
+    ARB_NODE(arb_transform_handle_type, arb_flag_none, float_slider_transform_func),
+    ARB_NODE(arb_transform_call_type, arb_flag_instanced_data, 0),
+    // Slider box taking all dim
+    ARB_NODE(
+        arb_box_type, 
+        arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_storaged_data, 
+        offsetof(float_slider_storage, current_style)
+    ),
+    // Jump to child
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_float_slider_data, child))
 };
 
 #endif // ARBOR_IMPL
