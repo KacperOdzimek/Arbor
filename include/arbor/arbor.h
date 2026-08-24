@@ -349,21 +349,24 @@ typedef struct arb_depth_data {
 // Data is arb_box_data, single child
 extern const arb_type arb_box_type;
 typedef struct arb_box_data {
-    arb_color       tint;       // box color
-    const char*     image;      // image name/path, may be NULL
-    float           rounding;   // pixel corner rounding radius
-    uint32_t        shader;     // shader effect index
+    arb_color       tint;       // Box color
+    const char*     image;      // Image name/path, may be NULL
+    float           rounding;   // Pixel corner rounding radius
+    uint32_t        shader;     // Shader effect index
 } arb_box_data;
 
 // Text render primitive
 // Data is arb_text_data, single child
 extern const arb_type arb_text_type;
+typedef struct arb_text_style {
+    unsigned int    size;       // Font size
+    const char*     font;       // Font name/path
+    arb_color       tint;       // Text color modyficator
+    uint32_t        shader;     // Shader effect index
+} arb_text_style;
 typedef struct arb_text_data {
-    unsigned int    size;       // font size
-    const char*     font;       // font name/path
-    const char*     text;       // text pointer
-    arb_color       tint;       // text color modyficator
-    uint32_t        shader;     // shader effect index
+    const arb_text_style*   style;  // Text style
+    const char*             text;   // Text pointer
 } arb_text_data;
 
 // ===========================
@@ -596,7 +599,10 @@ typedef struct arb_draw_request {
         } box;                                      // Per box data
         struct {
             void**          pointer;                // Text renderer-handle storage variable pointer
-            arb_text_data   data;                   // Rendered text data
+            unsigned int    size;                   // Rendered text font size
+            const char*     font;                   // Rendered text font name/path
+            arb_color       tint;                   // Rendered text color modyficator
+            uint32_t        shader;                 // Shader effect index
         } text;                                     // Per text box data
     };
 } arb_draw_request;
@@ -1547,7 +1553,10 @@ static void render_dfs(
             .layout             = &own->value_state,
             .is_box_not_text    = 0,
             .text.pointer       = &text_cache->allocation,
-            .text.data          = *tdata
+            .text.size          = tdata->style->size,
+            .text.font          = tdata->style->font,
+            .text.tint          = tdata->style->tint,
+            .text.shader        = tdata->style->shader
         });
     }
 
