@@ -250,15 +250,16 @@ typedef struct arb_type {
 
 typedef enum arb_flag {
     arb_flag_none               = 0,
-    arb_flag_instanced_data     = 1 << 0,   // This node data = instance + data_offset, prioritized over arb_flag_storaged_data
-    arb_flag_storaged_data      = 1 << 1,   // This node data = storage  + data_offset 
-    arb_flag_indirected_data    = 1 << 2,   // (After other data flags) This node data = *(node data pointer as double pointer)
-    arb_flag_ignore_min_width   = 1 << 3,   // Min width  of this node is set to 0
-    arb_flag_ignore_min_height  = 1 << 4,   // Min height of this node is set to 0
-    arb_flag_ignore_max_width   = 1 << 5,   // Max width  of this node is set to inf
-    arb_flag_ignore_max_height  = 1 << 6,   // Max height of this node is set to inf
-    arb_flag_clipbox            = 1 << 7,   // Children of this node on render are clipped to this node boundary
-    arb_flag_pink_box           = 1 << 8,   // Render pink box in node boundary - for debugging
+    arb_flag_variable_data      = 1 << 0,   // This node data = cache variable, see arb_variable_type
+    arb_flag_instanced_data     = 1 << 1,   // This node data = instance + data_offset, prioritized over arb_flag_storaged_data
+    arb_flag_storaged_data      = 1 << 2,   // This node data = storage  + data_offset 
+    arb_flag_indirected_data    = 1 << 3,   // (After other data flags) This node data = *(node data pointer as double pointer)
+    arb_flag_ignore_min_width   = 1 << 4,   // Min width  of this node is set to 0
+    arb_flag_ignore_min_height  = 1 << 5,   // Min height of this node is set to 0
+    arb_flag_ignore_max_width   = 1 << 6,   // Max width  of this node is set to inf
+    arb_flag_ignore_max_height  = 1 << 7,   // Max height of this node is set to inf
+    arb_flag_clipbox            = 1 << 8,   // Children of this node on render are clipped to this node boundary
+    arb_flag_pink_box           = 1 << 9,   // Render pink box in node boundary - for debugging
 } arb_flag;
 
 typedef struct arb_node {
@@ -333,6 +334,13 @@ typedef struct arb_invalidation_data {
 // This type data points to it's single child (may be NULL)
 // Can be used with instancing
 extern const arb_type arb_indirect_type;
+
+// Variable type
+// Usefull for making complex instance trickery; Proceed with caution (or avoid in most cases)
+// This node stores it's data to cache-local variable
+// Other nodes may pull this pointer as own data pointer with arb_flag_variable_data
+// The variable update propagates down-tree only
+extern const arb_type arb_variable_type;
 
 // ===========================
 // Rendering Node Types
@@ -992,11 +1000,15 @@ DEFINE_HASHMAP_FUNCS(storage_cache, storage_cache_slot, storage_cache_slots, sto
 // Node fields reads
 
 static void* safe_storage_slot_get_allocation(storage_cache_slot* slot);
-static inline const void* get_node_data(const arb_node* node, const char* instance, storage_cache_slot* storage) {
+
+static inline const void* get_node_data(
+    const arb_node* node, const char* instance, const void* variable, storage_cache_slot* storage
+) {
     const void* data = NULL;
 
     // 1) Dispatch data by source
-    if      (node->flags & arb_flag_instanced_data) data = (void*)(instance + node->data_offset);
+    if      (node->flags & arb_flag_variable_data)  data = variable;
+    else if (node->flags & arb_flag_instanced_data) data = (void*)(instance + node->data_offset);
     else if (node->flags & arb_flag_storaged_data)  data = (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
     else                                            data = node->data;
 
@@ -1006,9 +1018,11 @@ static inline const void* get_node_data(const arb_node* node, const char* instan
     return data;
 }
 
-static inline const arb_node* get_node_child(const arb_node* node, const char* instance, storage_cache_slot* storage) {
+static inline const arb_node* get_node_child(
+    const arb_node* node, const char* instance, const void* variable, storage_cache_slot* storage
+) {
     if (node->type == &arb_indirect_type) { // If indirect child is pointed by data
-        return get_node_data(node, instance, storage);
+        return get_node_data(node, instance, variable, storage);
     }
 
     // By default next child is next in memory
@@ -1022,9 +1036,11 @@ static inline const arb_node* get_node_child(const arb_node* node, const char* i
 
 // Gets slot, always inserts, as storage must always exist for node
 // May cause emergency jump
-static inline storage_cache_slot* storage_cache_hashmap_get_with_alloc(arb_cache* cache, node_stable_index index, storage_cache_slot* storage) {
+static inline storage_cache_slot* storage_cache_hashmap_get_with_alloc(
+    arb_cache* cache, node_stable_index index, const void* variable, storage_cache_slot* storage
+) {
     storage_cache_slot* slot = storage_cache_hashmap_get(cache, index);
-    uint64_t bytes = (uint64_t)(get_node_data(index.node, index.instance, storage));
+    uint64_t bytes = (uint64_t)(get_node_data(index.node, index.instance, variable, storage));
     if (slot->bytes != bytes) {
         // 0 bytes realloc case
         if (bytes == 0) {
@@ -1060,6 +1076,7 @@ typedef struct cursor_input_box {
     node_stable_index       owner;
     arb_node_cursor_func    handle;
     cache_slot*             slot;
+    const void*             variable;
     storage_cache_slot*     storage;
     int                     clip_index;
     short                   depth_index;
@@ -1116,7 +1133,7 @@ static inline void free_cached_text_alloc_requests(arb_cache* cache) {
 // ===========================
 // Text layout generation
 
-void create_text_request(arb_cache* cache, storage_cache_slot* storage, text_cache_slot* slot) {
+void create_text_request(arb_cache* cache, text_cache_slot* slot, const arb_text_data* tdata) {
     if (slot->allocation) { // Request client to free outdated allocation
         text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
     }
@@ -1124,7 +1141,6 @@ void create_text_request(arb_cache* cache, storage_cache_slot* storage, text_cac
     arb_text_alloc_request alloc_req = {0};
     alloc_req.text_pointer_out = &slot->allocation;
     
-    const arb_text_data* tdata = get_node_data(slot->key.node, slot->key.instance, storage);
     arb_injection_text_layout(
         tdata, 0, &alloc_req.glyphs_count, &alloc_req.glyphs, &slot->text_width, &slot->text_height
     );
@@ -1176,18 +1192,20 @@ static inline int find_shall_recurse(cache_slot* node_slot, const void* data, in
 
 // shall initialized with cache and 0 in other fields
 typedef struct caches_walk_order {
-    arb_cache*              cache;      // cache owning cache slots
-    size_t                  capacity;   // in cache_slot pointers
-    size_t                  position;   // in cache_slot pointers
-    cache_slot**            slots;      // sized capacity, node cache slots in enter order
-    storage_cache_slot**    storages;   // sized capacity, node storage slots in enter order
-    arb_node_layout_state** states;     // sized capacity, node layout states in enter order
-    size_t*                 subtree;    // sized capacity, node subtree size, including self
+    arb_cache*              cache;      // Cache owning cache slots
+    size_t                  capacity;   // In cache_slot pointers
+    size_t                  position;   // In cache_slot pointers
+    const void**            variables;  // Sized capacity, variable value at node
+    cache_slot**            slots;      // Sized capacity, node cache slots in enter order
+    storage_cache_slot**    storages;   // Sized capacity, node storage slots in enter order
+    arb_node_layout_state** states;     // Sized capacity, node layout states in enter order
+    size_t*                 subtree;    // Sized capacity, node subtree size, including self
 } caches_walk_order;
 
 // Guaranteed valid 0-intialized object after free
 // except cache field being untouched
 void free_caches_walk_order(caches_walk_order* order) {
+    free(order->variables); order->variables= NULL;
     free(order->slots);     order->slots    = NULL;
     free(order->storages);  order->storages = NULL;
     free(order->states);    order->states   = NULL;
@@ -1196,16 +1214,20 @@ void free_caches_walk_order(caches_walk_order* order) {
 }
 
 // Returns non-zero at success
-static inline void caches_walk_order_push(caches_walk_order* walk_order, cache_slot* slot, storage_cache_slot* storage_slot) {
+static inline void caches_walk_order_push(
+    caches_walk_order* walk_order, cache_slot* slot, const void* variable, storage_cache_slot* storage_slot
+) {
     if (walk_order->position + 1 > walk_order->capacity) {
         size_t new_cap = walk_order->capacity ? walk_order->capacity * 2 : 64;
     
+        const void**            new_var = realloc(walk_order->variables,new_cap * sizeof(const void*));
         cache_slot**            new_slt = realloc(walk_order->slots,    new_cap * sizeof(cache_slot*));
         storage_cache_slot**    new_sto = realloc(walk_order->storages, new_cap * sizeof(storage_cache_slot*));
         arb_node_layout_state** new_sts = realloc(walk_order->states,   new_cap * sizeof(arb_node_layout_state*));
         size_t*                 new_sub = realloc(walk_order->subtree,  new_cap * sizeof(size_t));
 
-        if (!new_slt || !new_sto || !new_sts || !new_sub) {
+        if (!new_var || !new_slt || !new_sto || !new_sts || !new_sub) {
+            if (new_var) free(new_var); else free(walk_order->variables);
             if (new_slt) free(new_slt); else free(walk_order->slots);
             if (new_sto) free(new_sto); else free(walk_order->storages);
             if (new_sts) free(new_sts); else free(walk_order->states);
@@ -1217,16 +1239,18 @@ static inline void caches_walk_order_push(caches_walk_order* walk_order, cache_s
         }
 
         walk_order->capacity = new_cap;
+        walk_order->variables= new_var;
         walk_order->slots    = new_slt;
         walk_order->storages = new_sto;
         walk_order->states   = new_sts;
         walk_order->subtree  = new_sub;
     }
 
-    walk_order->slots   [walk_order->position] = slot;
-    walk_order->storages[walk_order->position] = storage_slot,
-    walk_order->states  [walk_order->position] = &slot->value_state;
-    walk_order->subtree [walk_order->position] = 0;
+    walk_order->variables[walk_order->position] = variable;
+    walk_order->slots    [walk_order->position] = slot;
+    walk_order->storages [walk_order->position] = storage_slot,
+    walk_order->states   [walk_order->position] = &slot->value_state;
+    walk_order->subtree  [walk_order->position] = 0;
     walk_order->position++;
 }
 
@@ -1236,15 +1260,21 @@ size_t caches_walk_dfs(
     caches_walk_order*  walk_order, 
     cache_slot*         current, 
     const void*         instance,
+    const void*         variable,
     storage_cache_slot* storage
 ) {
     const arb_node* node  = current->key.node;
-    const arb_node* child = get_node_child(current->key.node, current->key.instance, storage);
+    const arb_node* child = get_node_child(current->key.node, current->key.instance, variable, storage);
     size_t          count = 0;
 
     // Change instance for subtree
     if (node->type == &arb_instance_type) {
-        instance = get_node_data(current->key.node, instance, storage);
+        instance = get_node_data(current->key.node, instance, variable, storage);
+    }
+
+    // Change variable for subtree
+    if (node->type == &arb_variable_type) {
+        variable = get_node_data(current->key.node, instance, variable, storage);
     }
 
     // Load storage slot
@@ -1255,11 +1285,11 @@ size_t caches_walk_dfs(
     if (node->type) {
         if (!node->type->array_child && child) {
             cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
-            caches_walk_order_push(walk_order, child_slot, storage); count++;
+            caches_walk_order_push(walk_order, child_slot, variable, storage); count++;
         }
         else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
             cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
-            caches_walk_order_push(walk_order, child_slot, storage); count++;
+            caches_walk_order_push(walk_order, child_slot, variable, storage); count++;
         }
     }
 
@@ -1267,7 +1297,7 @@ size_t caches_walk_dfs(
     size_t begin_pos = walk_order->position - count;
     size_t subtree = 1; // This node itself
     for (size_t i = 0; i < count; i++) {
-        size_t children_subtree = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, storage);
+        size_t children_subtree = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, variable, storage);
         walk_order->subtree[begin_pos + i] = children_subtree; // Enforce caches_walk_dfs evaluaton before LHS
         subtree += walk_order->subtree[begin_pos + i];  // This subtree = Self + All children subtrees
     }
@@ -1285,19 +1315,21 @@ size_t caches_walk_dfs(
 void PREFIX##_dfs(                                                                                  \
     caches_walk_order*  walk_order,                                                                 \
     cache_slot*         current,                                                                    \
+    const void*         variable,                                                                   \
     storage_cache_slot* storage,                                                                    \
     size_t              first_child                                                                 \
 ) {                                                                                                 \
-    cache_slot**         children = &walk_order->slots[first_child];                                \
-    size_t*              subtrees = &walk_order->subtree[first_child];                              \
-    storage_cache_slot** storages = &walk_order->storages[first_child];                             \
+    cache_slot**         children  = &walk_order->slots[first_child];                               \
+    size_t*              subtrees  = &walk_order->subtree[first_child];                             \
+    const void**         variables = &walk_order->variables[first_child];                           \
+    storage_cache_slot** storages  = &walk_order->storages[first_child];                            \
 \
-    const void* data = get_node_data(current->key.node, current->key.instance, storage);            \
+    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);  \
 \
     if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
         size_t child_first_child = first_child + current->value_child_count;                        \
         for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], storages[i], child_first_child);                  \
+            PREFIX##_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);    \
             child_first_child += subtrees[i] - 1;                                                   \
         }                                                                                           \
     }                                                                                               \
@@ -1318,14 +1350,16 @@ void PREFIX##_dfs(                                                              
 void PREFIX##_dfs(                                                                                  \
     caches_walk_order*  walk_order,                                                                 \
     cache_slot*         current,                                                                    \
+    const void*         variable,                                                                   \
     storage_cache_slot* storage,                                                                    \
     size_t              first_child                                                                 \
 ) {                                                                                                 \
     cache_slot**         children = &walk_order->slots[first_child];                                \
     size_t*              subtrees = &walk_order->subtree[first_child];                              \
+    const void**         variables = &walk_order->variables[first_child];                           \
     storage_cache_slot** storages = &walk_order->storages[first_child];                             \
 \
-    const void* data = get_node_data(current->key.node, current->key.instance, storage);            \
+    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);  \
 \
     __VA_ARGS__                                                                                     \
 \
@@ -1338,7 +1372,7 @@ void PREFIX##_dfs(                                                              
     if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
         size_t child_first_child = first_child + current->value_child_count;                        \
         for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], storages[i], child_first_child);                  \
+            PREFIX##_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);    \
             child_first_child += subtrees[i] - 1;                                                   \
         }                                                                                           \
     }                                                                                               \
@@ -1352,26 +1386,28 @@ void PREFIX##_dfs(                                                              
 void text_gen_dfs(
     caches_walk_order*  walk_order,
     cache_slot*         current,
+    const void*         variable,
     storage_cache_slot* storage,
     size_t              first_child
 ) {
     cache_slot**         children = &walk_order->slots[first_child];
     size_t*              subtrees = &walk_order->subtree[first_child];
+    const void**         variables = &walk_order->variables[first_child];
     storage_cache_slot** storages = &walk_order->storages[first_child];
 
-    const void* data = get_node_data(current->key.node, current->key.instance, storage);
+    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);
 
     if (find_shall_recurse(current, data, invalidation_flag_only_text)) {
         size_t child_first_child = first_child + current->value_child_count;
         for (size_t i = 0; i < current->value_child_count; i++) {
-            text_gen_dfs(walk_order, children[i], storages[i], child_first_child);
+            text_gen_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);
             child_first_child += subtrees[i] - 1;
         }
     }
 
     if (current->key.node->type == &arb_text_type) {
         text_cache_slot* text_cache = text_cache_hashmap_get(walk_order->cache, current->key);
-        create_text_request(walk_order->cache, storage, text_cache);
+        create_text_request(walk_order->cache, text_cache, (const arb_text_data*)data);
         current->value_state.measured_width  = (arb_length){text_cache->text_width,  text_cache->text_width, 1};
         current->value_state.measured_height = (arb_length){text_cache->text_height, text_cache->text_height, 1};
     }
@@ -1435,6 +1471,7 @@ TOP_DOWN_DFS(
 // Since it refers on the pointer only on enter - after visiting any child it is not used
 
 typedef struct render_dfs_subtree_state {
+    const void*             variable;
     const void*             instance;
     short                   depth_index;
     int                     clipbox_index;
@@ -1459,7 +1496,7 @@ static inline void render_dfs_recurse(
     arb_mat3x2                      transform, 
     const render_dfs_subtree_state* state
 ) {
-    const arb_node* child = get_node_child(own->key.node, own->key.instance, state->storage_slot);
+    const arb_node* child = get_node_child(own->key.node, own->key.instance, state->variable, state->storage_slot);
 
     // back node dimensions to avoid reading own slot after visiting child
     int own_width  = own->value_state.given_width;
@@ -1488,7 +1525,7 @@ static void render_dfs(
     node_stable_index index = {node, state->instance};
 
     // get node data
-    const void* data = get_node_data(node, state->instance, state->storage_slot);
+    const void* data = get_node_data(node, state->instance, state->variable, state->storage_slot);
     cache_slot* own  = cache_hashmap_get(cache, index);
 
     // change transform based on node's position and scale
@@ -1567,6 +1604,7 @@ static void render_dfs(
             .owner          = index,
             .handle         = node->type->cursor,
             .slot           = own,
+            .variable       = state->variable,
             .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
@@ -1578,6 +1616,7 @@ static void render_dfs(
             .owner          = index,
             .handle         = state->cursor_handle,
             .slot           = own,
+            .variable       = state->variable,
             .storage        = state->storage_slot,
             .depth_index    = state->depth_index,
             .clip_index     = state->clipbox_index,
@@ -1593,9 +1632,13 @@ static void render_dfs(
     if (node->type == &arb_instance_type) {
         new_state.instance = data;
     }
+    // Update variable for subtee
+    else if (node->type == &arb_variable_type) {
+        new_state.variable = data;
+    }
     // Update storage for subtree
-    if (node->type == &arb_storage_type) {
-        new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->storage_slot);
+    else if (node->type == &arb_storage_type) {
+        new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->variable, state->storage_slot);
         new_state.storage_data = safe_storage_slot_get_allocation(new_state.storage_slot);
     }
     // Update depth for subtree
@@ -1680,8 +1723,8 @@ arb_upload_access arb_cache_update(
     render_dfs(cache, cache->resolution_x, cache->resolution_y, root, arb_mat3x2_identity(), &default_subtree_state);
 
     // Sort render requests and input boxes by depth
-    stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(arb_draw_request),      helper_draw_requests_greater_depth);
-    stable_sort(cache->cursor_input_boxes,  cache->cursor_input_boxes_count, sizeof(cursor_input_box),  helper_cursor_input_boxes_greater_depth);
+    stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(arb_draw_request), helper_draw_requests_greater_depth);
+    stable_sort(cache->cursor_input_boxes,  cache->cursor_input_boxes_count, sizeof(cursor_input_box), helper_cursor_input_boxes_greater_depth);
 
     // Find out normalized cursor position
     float norm_cursor_x = -1.0f + 2.0f * ((float)cursor_state.position_x / resolution_x);
@@ -1710,7 +1753,7 @@ arb_upload_access arb_cache_update(
         input_data.hovered     = cursor_inside && !ever_was_inside;
         input_data.raw_hovered = cursor_inside;
         if (ibox->handle) ibox->handle(
-            get_node_data(ibox->owner.node, ibox->owner.instance, ibox->storage), 
+            get_node_data(ibox->owner.node, ibox->owner.instance, ibox->variable, ibox->storage), 
             safe_storage_slot_get_allocation(ibox->storage), &input_data,
             &ibox->slot->value_state, cache->resolution_x, cache->resolution_y
         );
@@ -1735,15 +1778,15 @@ arb_upload_access arb_cache_update(
         root_cache->value_state.given_height = resolution_y;
 
         // Find walk order
-        size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL);
+        size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL, NULL);
         
         // Perform all passes
-        text_gen_dfs(&walk_order, root_cache, NULL, 0);
-        width_measure_dfs(&walk_order, root_cache, NULL, 0);
-        width_distribute_dfs(&walk_order, root_cache, NULL, 0);
-        height_measure_dfs(&walk_order, root_cache, NULL, 0);
-        height_distribute_dfs(&walk_order, root_cache, NULL, 0);
-        position_dfs(&walk_order, root_cache, NULL, 0);
+        text_gen_dfs(&walk_order, root_cache, NULL, NULL, 0);
+        width_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
+        width_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
+        height_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
+        height_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
+        position_dfs(&walk_order, root_cache, NULL, NULL, 0);
 
         free_caches_walk_order(&walk_order);
     }
@@ -1942,10 +1985,17 @@ const arb_type arb_transform_call_type = box_behavior_type;
 
 // ===========================
 // Indirect Type
+// This type is specially handled in pass implementation
 const arb_type arb_indirect_type = box_behavior_type;
 
 // ===========================
+// Variable Type
+// This type is specially handled in pass implementation
+const arb_type arb_variable_type = box_behavior_type;
+
+// ===========================
 // Storage Type
+// This type is specially handled in pass implementation
 const arb_type arb_storage_type = box_behavior_type;
 
 // ===========================
