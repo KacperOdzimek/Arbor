@@ -249,17 +249,19 @@ typedef struct arb_type {
 } arb_type;
 
 typedef enum arb_flag {
-    arb_flag_none               = 0,
-    arb_flag_variable_data      = 1 << 0,   // This node data = cache variable, see arb_variable_type
-    arb_flag_instanced_data     = 1 << 1,   // This node data = instance + data_offset, prioritized over arb_flag_storaged_data
-    arb_flag_storaged_data      = 1 << 2,   // This node data = storage  + data_offset 
-    arb_flag_indirected_data    = 1 << 3,   // (After other data flags) This node data = *(node data pointer as double pointer)
-    arb_flag_ignore_min_width   = 1 << 4,   // Min width  of this node is set to 0
-    arb_flag_ignore_min_height  = 1 << 5,   // Min height of this node is set to 0
-    arb_flag_ignore_max_width   = 1 << 6,   // Max width  of this node is set to inf
-    arb_flag_ignore_max_height  = 1 << 7,   // Max height of this node is set to inf
-    arb_flag_clipbox            = 1 << 8,   // Children of this node on render are clipped to this node boundary
-    arb_flag_pink_box           = 1 << 9,   // Render pink box in node boundary - for debugging
+    arb_flag_none                   = 0,
+    arb_flag_variable_data          = 1 << 0,   // This node data = cache variable, see arb_variable_type
+    arb_flag_instanced_data         = 1 << 1,   // This node data = instance + data_offset, prioritized over arb_flag_storaged_data
+    arb_flag_storaged_data          = 1 << 2,   // This node data = storage  + data_offset 
+    arb_flag_indirected_data        = 1 << 3,   // (After other data flags) This node data = *(node data pointer as double pointer)
+    arb_flag_ignore_min_width       = 1 << 4,   // Min width  of this node is set to 0
+    arb_flag_ignore_min_height      = 1 << 5,   // Min height of this node is set to 0
+    arb_flag_ignore_max_width       = 1 << 6,   // Max width  of this node is set to inf
+    arb_flag_ignore_max_height      = 1 << 7,   // Max height of this node is set to inf
+    arb_flag_set_max_to_min_width   = 1 << 8,   // Sets max width to min width, after ignore flags
+    arb_flag_set_max_to_min_height  = 1 << 9,   // Sets max height to min height, after ignore flags
+    arb_flag_clipbox                = 1 << 10,  // Children of this node on render are clipped to this node boundary
+    arb_flag_pink_box               = 1 << 11,  // Render pink box in node boundary - for debugging
 } arb_flag;
 
 typedef struct arb_node {
@@ -538,14 +540,14 @@ typedef struct arb_float_slider_data {
     .data_offset  = (size_t)(__VA_ARGS__)  \
 }
 
-// Uniform padding (0, max_value, flex 1) node
-#define ARB_PADD(max_value)  (arb_node){   \
+// Uniform padding (value, value, flex 0) node
+#define ARB_PADD(value)  (arb_node){   \
     .type  = &arb_padding_type,                     \
     .data  = &(arb_padding_data){                   \
-        .top    = (arb_length){0, max_value, 1},    \
-        .bottom = (arb_length){0, max_value, 1},    \
-        .left   = (arb_length){0, max_value, 1},    \
-        .right  = (arb_length){0, max_value, 1},    \
+        .top    = (arb_length){value, value, 0},    \
+        .bottom = (arb_length){value, value, 0},    \
+        .left   = (arb_length){value, value, 0},    \
+        .right  = (arb_length){value, value, 0},    \
     },                                              \
 }
 
@@ -1424,6 +1426,9 @@ BOTTOM_UP_DFS(
         current->value_state.measured_width.max  = ARB_INF_LENGTH;
         current->value_state.measured_width.flex = 1.0f;
     }
+    if (current->key.node->flags & arb_flag_set_max_to_min_width) {
+        current->value_state.measured_width.max = current->value_state.measured_width.min;
+    }
 );
 
 // Width distribute pass, additionaly ensure received width
@@ -1446,6 +1451,9 @@ BOTTOM_UP_DFS(
     if (current->key.node->flags & arb_flag_ignore_max_height) {
         current->value_state.measured_height.max  = ARB_INF_LENGTH;
         current->value_state.measured_height.flex = 1.0f;
+    }
+    if (current->key.node->flags & arb_flag_set_max_to_min_height) {
+        current->value_state.measured_height.max = current->value_state.measured_height.min;
     }
 );
 
