@@ -1007,9 +1007,9 @@ static inline const void* get_node_data(
     const void* data = NULL;
 
     // 1) Dispatch data by source
-    if      (node->flags & arb_flag_variable_data)  data = variable;
-    else if (node->flags & arb_flag_instanced_data) data = (void*)(instance + node->data_offset);
-    else if (node->flags & arb_flag_storaged_data)  data = (void*)((char*)safe_storage_slot_get_allocation(storage) + node->data_offset);
+    if      (node->flags & arb_flag_variable_data)  data = (const char*)variable + node->data_offset;
+    else if (node->flags & arb_flag_instanced_data) data = (const char*)instance + node->data_offset;
+    else if (node->flags & arb_flag_storaged_data)  data = (const char*)safe_storage_slot_get_allocation(storage) + node->data_offset;
     else                                            data = node->data;
 
     // 2) If indirected, walk one more pointer
