@@ -870,6 +870,7 @@ typedef struct cache_slot {
 typedef struct text_cache_slot {
     node_stable_index       key;
     unsigned char           last_frame_used;
+    unsigned char           last_frame_rebuild;
     int                     text_width;
     int                     text_height;
     void*                   allocation;
@@ -1136,6 +1137,11 @@ static inline void free_cached_text_alloc_requests(arb_cache* cache) {
 // Text layout generation
 
 void create_text_request(arb_cache* cache, text_cache_slot* slot, const arb_text_data* tdata) {
+    // The text was alredy rebuilt in this frame; Discard to avoid dumb work and memory leak
+    // (may happen when same [node, instance] pair is used multiple times in single frame)
+    if (slot->last_frame_rebuild == cache->frame_index) return;
+    slot->last_frame_rebuild = cache->frame_index;
+
     if (slot->allocation) { // Request client to free outdated allocation
         text_free_request_cache_push(cache, (arb_text_free_request){.text_pointer = slot->allocation});
     }
