@@ -1676,16 +1676,22 @@ static void render_dfs(
 static inline int helper_draw_requests_greater_depth(const void* av, const void* bv) {
     const arb_draw_request* a = (const arb_draw_request*)av; 
     const arb_draw_request* b = (const arb_draw_request*)bv;
-    if (a->depth_index > b->depth_index) return 1;
-    return 0;
+    return (a->depth_index > b->depth_index);
 }
 
 // Helper for cursor input boxes depth sorting : deepest first
 static inline int helper_cursor_input_boxes_greater_depth(const void* av, const void* bv) {
     const cursor_input_box* a = (const cursor_input_box*)av; 
     const cursor_input_box* b = (const cursor_input_box*)bv;
-    if (a->depth_index > b->depth_index) return 1;
-    return 0;
+    return (a->depth_index > b->depth_index);
+}
+
+// Helper for free requests compare with qsort
+// Have propery that NULL pointer are left at end
+static inline int helper_free_requests_compare_value(const void* av, const void* bv) {
+    const arb_text_free_request* a = (const arb_text_free_request*)av;
+    const arb_text_free_request* b = (const arb_text_free_request*)bv;
+    return (uintptr_t)(a->text_pointer) > (uintptr_t)(b->text_pointer);
 }
 
 // Main update function, calls passes
@@ -1811,12 +1817,28 @@ arb_upload_access arb_cache_update(
     // Pick next frame index
     cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_FIRST) cache->frame_index = LAST_FRAME_USED_FIRST;
 
+    // Remove duplicate text_free_requests - those may appear when two diffent 
+    // branches IDIR to same text node (same node ptr, same instance ptr)
+    qsort(  // Sort to put duplicated together
+        cache->text_free_requests, cache->text_free_requests_count, 
+        sizeof(arb_text_free_request), helper_free_requests_compare_value
+    );
+    size_t erased_requests = 0; for (size_t i = 1; i < cache->text_free_requests_count; i++) {
+        if (cache->text_free_requests[i-1].text_pointer == cache->text_free_requests[i].text_pointer) {
+            cache->text_free_requests[i-1].text_pointer = NULL; erased_requests++;
+        }
+    };
+    if (erased_requests) qsort(  // Sort to put NULLs at the end
+        cache->text_free_requests, cache->text_free_requests_count, 
+        sizeof(arb_text_free_request), helper_free_requests_compare_value
+    );
+
     // Return upload access
     return (arb_upload_access){
         .resolution_x        = cache->resolution_x,
         .resolution_y        = cache->resolution_y,
 
-        .text_free_count     = cache->text_free_requests_count,
+        .text_free_count     = cache->text_free_requests_count - erased_requests,
         .text_free_requests  = cache->text_free_requests,
 
         .text_alloc_count    = cache->text_alloc_requests_count,
