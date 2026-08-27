@@ -24,6 +24,16 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | Transform and clipping support | Everything in arbor can be arbitrary rotated, translated, scaled or trimmed
 | Custom Node Types | User can define own types, if willing to |
 
+## Building
+
+Include `arbor.h` in your project.
+In **one** source file, define following to build implementation:
+
+```c
+#define ARBOR_IMPL
+#include "arbor.h"
+```
+
 ## Documentation
 
 | Document | Knowledge |
@@ -48,10 +58,13 @@ More advanced renderer linked in ``integration reference``.
 Include `arbor.h` in your project.
 In **one** source file, define following to build implementation:
 
-```c
-#define ARBOR_IMPL
-#include "arbor.h"
 ```
+C files:    example/main.c, example/renderer.c, example/deps/glad.c
+Libraries:  -lglfw, -lGL, -lm
+```
+
+This example allows user to test layouting system, but have limitation of only one font, and no images.
+More advanced renderer linked in ``integration reference``.
 
 ## License
 
