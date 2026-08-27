@@ -42,6 +42,12 @@ caller-supplied content. Data is a pointer to that branch's first node, or
 `NULL` to skip. `ARB_IDIR(array)` and `ARB_ELEM(...)` are the shortcuts for
 named and inlined branches respectively.
 
+### `arb_variable_type`
+Stores its data to a cache-local variable for its subtree, propagating
+down-tree only. Descendant nodes can then read that value as their own data
+source with `arb_flag_variable_data`, the same offset mechanism instancing
+and storage use. See ``design_referende/variable``. Single child.
+
 ## 2. Rendering Node Types
 
 ### `arb_depth_type`
@@ -67,15 +73,22 @@ typedef struct arb_box_data {
 ```
 
 ### `arb_text_type`
-The text render primitive. Single child.
+The text render primitive. Single child. Styling (size, font, tint, shader)
+is factored into a separate `arb_text_style` struct, referenced by pointer,
+so many text nodes can share one style; only the text pointer itself is
+expected to vary node to node.
 
 ```c
+typedef struct arb_text_style {
+    unsigned int            size;   // Font size
+    const char*             font;   // Font name/path
+    arb_color               tint;   // Text color modifier
+    uint32_t                shader; // Shader effect index
+} arb_text_style;
+
 typedef struct arb_text_data {
-    unsigned int size;   // font size
-    const char*  font;   // font name/path
-    const char*  text;   // text pointer
-    arb_color    tint;   // text color modifier
-    uint32_t     shader; // shader effect index
+    const arb_text_style*   style;  // Text style; must not be NULL
+    const char*             text;   // Text pointer
 } arb_text_data;
 ```
 
@@ -188,37 +201,86 @@ ARB_IDIR(arb_structure)
 Combines storage (pressed/idle state), the cursor system, and instancing
 (caller styling and callbacks) into a  clickable box that wraps
 arbitrary caller content. Fills all given space (`flex = 1`, `max = inf`).
+Styling and callbacks/payload are split into their own `style`/`target`
+structs, each referenced by pointer, so many buttons can share one style or
+one target independently:
 
 ```c
+typedef struct arb_button_style {
+    const arb_box_data*         default_style;          // Button style when not touched
+    const arb_box_data*         hovered_style;          // Button style when hovered
+    const arb_box_data*         pressed_style;          // Button style when pressed
+} arb_button_style;
+
+typedef struct arb_button_target {
+    arb_button_func             on_clicked;             // On button first pressed button
+    arb_button_func             on_released;            // On button release frame
+    arb_button_func             on_held;                // Every frame callback, when button pressed
+    void*                       payload;                // Pointer passed to arb_button_funcs
+} arb_button_target;
+
 typedef struct arb_button_data {
-    void*               payload;
-    arb_button_func     on_clicked;
-    arb_button_func     on_released;
-    arb_button_func     on_held;
-    const arb_box_data* default_style;
-    const arb_box_data* hovered_style;
-    const arb_box_data* pressed_style;
-    const arb_node*     child;
+    const arb_button_style*     style;                  // Button style pointer;  Must not be NULL
+    const arb_button_target*    target;                 // Button target pointer; Must not be NULL
+    const arb_node*             child;                  // Button child, overlay on button
 } arb_button_data;
 ```
 
 `on_clicked`/`on_released`/`on_held` are each `void(*)(void* payload)`,
-called with `data->payload`. `child` is spliced in via an instanced
-indirect node, so a button can wrap a label, an icon, or any other branch.
+called with `target->payload`. `child` is spliced in via an instanced,
+indirected indirect node, so a button can wrap a label, an icon, or any
+other branch.
 
 ### `arb_vertical_scrollbox_structure` / `arb_horizontal_scrollbox_structure`
-Scrollable containers for their respective axes, sharing the same data
-shape as the button (styled states plus an injected child):
+Scrollable containers for their respective axes, sharing the same
+style/child data shape as the button:
 
 ```c
+typedef struct arb_scrollbox_style {
+    const arb_box_data*             default_style;      // Scrollbox handle style when not touched
+    const arb_box_data*             hovered_style;      // Scrollbox handle style when hovered
+    const arb_box_data*             pressed_style;      // Scrollbox handle style when pressed
+} arb_scrollbox_style;
+
 typedef struct arb_scrollbox_data {
-    const arb_box_data* default_style;
-    const arb_box_data* hovered_style;
-    const arb_box_data* pressed_style;
-    const arb_node*     child;
+    const arb_scrollbox_style*      style;              // Scrollbox style pointer; Must not be NULL
+    const arb_node*                 child;              // Scrollbox scrolled child
 } arb_scrollbox_data;
 ```
 
-The three style fields describe the scrollbar/track appearance in its
-idle, hovered, and pressed states; `child` is the scrolled content,
-injected the same way as the button's.
+The three style fields (inside `style`) describe the scrollbar/track
+appearance in its idle, hovered, and pressed states; `child` is the
+scrolled content, injected the same way as the button's.
+
+### `arb_float_slider_structure`
+A draggable, scroll-adjustable fill-slider bound to a `float` target,
+combining storage (drag state and current style), the cursor system (drag
+and scroll-wheel handling), and the transform system (scaling the visual
+fill to the current value). Fills all given space (`flex = 1`, `max = inf`).
+
+```c
+typedef struct arb_float_slider_style {
+    int                             is_vertical;        // If vertical slide vertical, else hortizontal
+    int                             is_scroll_disabled; // If true scrolling disabled
+    const arb_box_data*             default_style;      // Slider style default
+    const arb_box_data*             hovered_style;      // Slider style when hovered
+    const arb_box_data*             pressed_style;      // Slider style when pressed
+} arb_float_slider_style;
+
+typedef struct arb_float_slider_target {
+    float                           min, max;           // Slider range
+    float*                          target;             // Slider storage variable
+} arb_float_slider_target;
+
+typedef struct arb_float_slider_data {
+    const arb_float_slider_style*   style;              // Slider style;  Must not be NULL
+    const arb_float_slider_target*  target;             // Slider Target; Must not be NULL
+    const arb_node*                 child;              // Slider Child
+} arb_float_slider_data;
+```
+
+Dragging (or scrolling, unless `is_scroll_disabled`) moves `*target->target`
+between `target->min` and `target->max`; the slider's own visual fill is
+scaled to match via the transform system, anchored at the bottom edge when
+`is_vertical`, or the left edge otherwise. `child` is injected the same way
+as the button's.

@@ -53,6 +53,19 @@ Libraries:  -lglfw, -lGL, -lm
 This example allows user to test layouting system, but have limitation of only one font, and no images.
 More advanced renderer linked in ``integration reference``.
 
+## Building
+
+Include `arbor.h` in your project.
+In **one** source file, define following to build implementation:
+
+```
+C files:    example/main.c, example/renderer.c, example/deps/glad.c
+Libraries:  -lglfw, -lGL, -lm
+```
+
+This example allows user to test layouting system, but have limitation of only one font, and no images.
+More advanced renderer linked in ``integration reference``.
+
 ## License
 
 This project is licensed under MIT License. See [LICENSE.md](LICENSE.md).
