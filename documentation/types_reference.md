@@ -167,17 +167,23 @@ And a shortcut macro to pull all four non-positioning ones in at once:
 
 ```c
 typedef void(arb_node_render_func_signature)(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_mat3x2*             transform,
-    int                     resolution_x,
-    int                     resolution_y
+    const void*                     node_data,
+    void*                           storage_data,
+    arb_mat3x2*                     transform,
+    const arb_node_layout_state*    layout,
+    int                             resolution_x,
+    int                             resolution_y
 );
 ```
 
 This runs top-down, once layout is fully resolved. `transform` arrives as
 the transform inherited from the parent; it can be mutated in place (scale,
 offset, etc.) before it's handed further down to the node's children.
+`layout` is this node's own, already-resolved `arb_node_layout_state`,
+provided so a render function can read final sizes/offsets (e.g. to scale a
+fill relative to `given_width`/`given_height`) without redoing layout work.
+`resolution_x`/`resolution_y` are the current screen resolution, needed to
+convert a pixel-space offset into the clip-space `transform` operates in.
 
 This is the intended way of creating animations, as layout passes are
 supposed to be blocked from updating too often by the invalidation system —
@@ -187,14 +193,21 @@ rendering happens every frame.
 
 ```c
 typedef void(arb_node_cursor_func_signature)(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_cursor_input*  node_input
+    const void*                     node_data,
+    void*                           storage_data,
+    arb_node_cursor_input*          node_input,
+    const arb_node_layout_state*    layout,
+    int                             resolution_x,
+    int                             resolution_y
 );
 ```
 
 Setting the cursor func causes the node to push an input box every frame,
-just as `arb_cursor_call_type` would.
+just as `arb_cursor_call_type` would. As with `transform`, `layout` and
+`resolution_x`/`resolution_y` give the callback this node's resolved layout
+state and the current screen resolution, e.g. to convert a raw cursor pixel
+position into a fraction of the node's own width/height (as a slider drag
+would need).
 
 ## 6. Examples
 
