@@ -8,8 +8,7 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 
 ## Examples
 
-![Example Text Viewer App](/example/rendered.png)
-*Example text viewer app (I promise this system can so much more, it is just fresh, nothing cool to show yet)*
+![Example System Monitor Panel](/gallery/intro.png)
 
 ## Features
 
