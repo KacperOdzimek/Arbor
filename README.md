@@ -16,7 +16,7 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | Feature | Gain |
 | --- | --- |
 | Single header library | Easy compilation - no linking, no build systems |
-| Render Agnostic | Arbor returns lists of rendering primitives, you can easily render with own renderer/engine |
+| Renderer Agnostic | Arbor returns lists of rendering primitives, you can easily render with own renderer/engine |
 | Data Driven | Arbor is all data - UI can be easily generated with code, or predefinied as a static array |
 | Reusable Components | Using *instancing system*, user can define ui element once and use multiple times with diffrent images/texts/contents |
 | Cursor Input Handling | Just pass mouse position and state, and buttons will work |
@@ -24,15 +24,37 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | Transform and clipping support | Everything in arbor can be arbitrary rotated, translated, scaled or trimmed
 | Custom Node Types | User can define own types, if willing to |
 
-## Building
+## Testing Arbor
 
-Include `arbor.h` in your project.
-In **one** source file, define following to build implementation:
+Some examples can be found in ``examples`` folder, along with example OpenGL rendered. If You are not sure yet whether Arbor is for you check them out!
+
+Following can be run on Linux to run example:
+```sh
+# Inside /arbor/examples
+ls # See available examples - .c files with prefix example_
+./run.sh <example name no extension> # Build and run example
+```
+
+This require following libraries to be installed on system:
+```yaml
+glfw, opengl
+```
+
+You can also create your own test application in ``examples`` directory - create a file with following:
 
 ```c
-#define ARBOR_IMPL
-#include "arbor.h"
+#include "arbor/arbor.h"
+
+void init()  {};
+void frame() {};
+void term()  {};
+
+arb_node main_structure[] = {
+    ARB_LAST
+};
 ```
+
+And have fun creating!
 
 ## Documentation
 
@@ -43,28 +65,15 @@ In **one** source file, define following to build implementation:
 | [Types Reference](documentation/types_reference.md) | Learn how to define custom Arbor node type, for custom behavior |
 | [Integration Reference](documentation/integration_reference.md)| Learn how to integrate and render Arbor with your engine/renderer. |
 
-Also a little OpenGL renderer is provided - compile:
-
-```
-C files:    example/main.c, example/renderer.c, example/deps/glad.c
-Libraries:  -lglfw, -lGL, -lm
-```
-
-This example allows user to test layouting system, but have limitation of only one font, and no images.
-More advanced renderer linked in ``integration reference``.
-
 ## Building
 
 Include `arbor.h` in your project.
 In **one** source file, define following to build implementation:
 
+```c
+#define ARBOR_IMPL
+#include "arbor/arbor.h"
 ```
-C files:    example/main.c, example/renderer.c, example/deps/glad.c
-Libraries:  -lglfw, -lGL, -lm
-```
-
-This example allows user to test layouting system, but have limitation of only one font, and no images.
-More advanced renderer linked in ``integration reference``.
 
 ## License
 

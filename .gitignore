@@ -12,6 +12,6 @@
 !documentation
 !documentation/**
 
-!example/
-!example/**
-example/build
+!examples/
+!examples/**
+examples/build

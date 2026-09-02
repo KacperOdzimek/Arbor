@@ -1,6 +1,7 @@
 // ===========================
 // Warning! This is an example engine do not use in production!
-// See "Notes"!
+// See "Notes"! This was, to be honest generated with Claude, 
+// so You can play with Arbor, before implementing in proper environement.
 
 #include "thirdparty/glad.h"
 #include <GLFW/glfw3.h>
@@ -29,19 +30,19 @@ void term();
 // ===========================
 // Table of contents
 //
-//   1. Configuration           - compile-time engine configuration (paths, window...)
-//   2. Rendering Objects       - the format of data we send to GPU shaders
-//   3. Data Structures         - remaining internal structs (font, image, subpartitioner)
-//   4. Internal State          - the engine's/renderer's state
-//   5. Forward Declarations    - functions forwards
-//   6. Engine API              - init / frame / term / main, and window setup
-//   7. Rendering Itself        - the actual per-frame draw
-//   8. Text Generation         - arb_injection_text_layout
-//   9. Texture Slots           - shared GL texture unit allocator (fonts & images)
-//  10. Font System             - dynamic, multi-font SDF atlases: baking & caching glyphs
-//  11. Image System            - dynamic image atlas: loading & caching images
-//  12. Subpartitioning         - glyph SSBO suballocator
-//  13. Helpers                 - small utilities used all over the file
+//   1. Configuration
+//   2. Rendering Objects
+//   3. Data Structures
+//   4. Internal State
+//   5. Forward Declarations
+//   6. Engine API
+//   7. Rendering Itself
+//   8. Text Generation
+//   9. Texture Slots
+//  10. Font System
+//  11. Image System
+//  12. Subpartitioning
+//  13. Helpers
 
 // ===========================
 // Notes:
@@ -280,11 +281,6 @@ static uint32_t decode_utf8(const char** p);
 
 // ===========================
 // 6. Engine API
-// init / frame / term replace the old parametrized arbor_renderer_init /
-// _shutdown / _draw_frame trio. None of them take arguments any more, so
-// per-example configuration now lives in section 1 instead of being passed
-// in - that's what lets this exact file back multiple examples unmodified;
-// only the linked-in `main_structure[]` changes between them.
 
 static void scroll_callback(GLFWwindow* w, double xoffset, double yoffset) {
     (void)w;
@@ -321,9 +317,6 @@ static void init_main() {
     init_glyph_allocator(1024); // Start with 1024 contiguous glyph slots
     init_dynamic_image_atlas();
 
-    // The default font is loaded eagerly, so a bad default path fails fast at
-    // startup instead of silently later. Every other font loads lazily, on
-    // first reference, from get_or_load_font() - see "Font System" below.
     if (!get_or_load_font(ENGINE_DEFAULT_FONT_PATH)) {
         fprintf(stderr, "ERROR: Failed to load default font. Exiting.\n");
         term_main(); exit(EXIT_FAILURE);
@@ -626,14 +619,6 @@ static void draw_frame(arb_upload_access access, int width, int height) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo_glyphs);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssbo_clipboxes);
 
-    // tex_samplers[16] in the fragment shader is a bindless-style array: each
-    // element is pinned to its own GL texture unit via layout(binding = 0),
-    // and texture_index picks which element/unit a draw item samples from:
-    //   font  (texture_index < 0): tex_index = -(texture_index + 1)
-    //   image (texture_index > 0): tex_index =  texture_index - 1
-    // Every loaded font and the image atlas each own one slot in that same
-    // pool (see "Texture Slots"), so all of them need (re)binding here, since
-    // any of them may be sampled by this draw call.
     for (size_t f = 0; f < g_font_count; f++) {
         glActiveTexture(GL_TEXTURE0 + g_fonts[f].slot);
         glBindTexture(GL_TEXTURE_2D, g_fonts[f].font_texture);
@@ -677,9 +662,6 @@ void arb_injection_text_layout(
         return;
     }
 
-    // Resolve text_data->font to a loaded (or freshly-loaded) font atlas -
-    // see "Font System" below. A font that fails to load degrades to empty
-    // text rather than crashing the app.
     dynamic_font_atlas* font = get_or_load_font(text_data->style->font);
     if (!font) {
         *out_count  = 0; *out_glyphs = NULL;
@@ -762,14 +744,6 @@ void arb_injection_text_layout(
 
 // ===========================
 // 9. Texture Slots
-// Every font and image draws from one shared pool of GL texture units,
-// mirroring the fragment shader's tex_samplers[ENGINE_MAX_TEXTURE_SLOTS]
-// array (each slot pinned to the matching unit via layout(binding = 0)).
-// A font at slot S encodes as texture_index = -(S + 1); an image at slot S
-// encodes as texture_index = S + 1 (see draw_frame()). Slots are handed out
-// once, in load order, and never reclaimed - fine for an example with a
-// handful of fonts/images, not for a renderer that needs to stream through
-// more than fit in the array.
 
 static int allocate_texture_slot() {
     if (g_next_texture_slot >= ENGINE_MAX_TEXTURE_SLOTS) return -1;
@@ -778,10 +752,6 @@ static int allocate_texture_slot() {
 
 // ===========================
 // 10. Font System
-// Fonts are resolved by string (their file path): the first time a path is
-// seen it's parsed, given its own signed-distance-field atlas texture and
-// its own texture slot, then cached and reused for every later reference to
-// that same path - the same pattern the image system below uses for images.
 
 static dynamic_font_atlas* get_or_load_font(const char* path) {
     if (!path || path[0] == '\0') path = ENGINE_DEFAULT_FONT_PATH;
@@ -946,9 +916,6 @@ static dynamic_glyph_info* get_or_bake_glyph(dynamic_font_atlas* font, uint32_t 
 
 // ===========================
 // 11. Image System
-// A dynamic image atlas: like each font atlas above, images are decoded and
-// packed into a single GPU texture the first time their string is seen, then
-// cached and reused for every subsequent reference to that same string.
 
 static void init_dynamic_image_atlas() {
     g_image_atlas.slot           = allocate_texture_slot();
@@ -1053,8 +1020,6 @@ static cached_image_info* get_or_load_image(const char* path) {
 
 // ===========================
 // 12. Subpartitioning
-// Used to fit all glyphs in one buffer for batched rendering
-// The allocator provided is very simple (just for the sake of example) and not good for shipping
 
 static void init_glyph_allocator(size_t cap) {
     g_glyph_alloc.capacity = cap ? cap : 1024;
