@@ -195,7 +195,7 @@ static void refresh_on_clicked(void* payload) {
 }
 
 void initial_size(int* width, int* height) {
-    *width = 500; *height = 400; // slightly wider to fit 4 cards
+    *width = 500; *height = 400; // Anything
 }
 
 void init(void) {

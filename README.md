@@ -54,6 +54,10 @@ You can also create your own test application in ``examples`` directory - create
 ```c
 #include "arbor/arbor.h"
 
+void initial_size(int* width, int* height) {
+    *width = 500; *height = 400; // Window Dims
+}
+
 void init()  {};
 void frame() {};
 void term()  {};
