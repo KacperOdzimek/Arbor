@@ -24,6 +24,15 @@ Arbor is renderer agnostic as, instead of doing gpu api calls, it returns sorted
 | Transform and clipping support | Everything in arbor can be arbitrary rotated, translated, scaled or trimmed
 | Custom Node Types | User can define own types, if willing to |
 
+## Documentation
+
+| Document | Knowledge |
+| --- | --- |
+| [Design Reference](documentation/design_reference.md) | Learn how to use Arbor to define your application's UI. |
+| [Contents Reference](documentation/contents_reference.md) | Learn Arbor node types and UI prefabs. |
+| [Types Reference](documentation/types_reference.md) | Learn how to define custom Arbor node type, for custom behavior |
+| [Integration Reference](documentation/integration_reference.md)| Learn how to integrate and render Arbor with your engine/renderer. |
+
 ## Testing Arbor
 
 Some examples can be found in ``examples`` folder, along with example OpenGL rendered. If You are not sure yet whether Arbor is for you check them out!
@@ -55,15 +64,6 @@ arb_node main_structure[] = {
 ```
 
 And have fun creating!
-
-## Documentation
-
-| Document | Knowledge |
-| --- | --- |
-| [Design Reference](documentation/design_reference.md) | Learn how to use Arbor to define your application's UI. |
-| [Contents Reference](documentation/contents_reference.md) | Learn Arbor node types and UI prefabs. |
-| [Types Reference](documentation/types_reference.md) | Learn how to define custom Arbor node type, for custom behavior |
-| [Integration Reference](documentation/integration_reference.md)| Learn how to integrate and render Arbor with your engine/renderer. |
 
 ## Building
 
