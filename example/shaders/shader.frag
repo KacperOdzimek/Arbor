@@ -16,7 +16,7 @@ layout(std430, binding = 3) readonly buffer ClipboxesBuffer {
     mat3x2 clipboxes[];
 };
 
-layout(binding = 0) uniform sampler2D tex_samplers[16]; // Scale array size to your needs
+layout(binding = 0) uniform sampler2D tex_samplers[16];
 
 mat3 expand_affine(mat3x2 a) {
     return mat3(
