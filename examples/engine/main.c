@@ -23,6 +23,7 @@
 extern arb_node main_structure[];
 
 // Example callbacks
+void initial_size(int* width, int* height);
 void init();
 void frame();
 void term();
@@ -72,8 +73,6 @@ void term();
 // ===========================
 // 1. Configuration
 
-#define ENGINE_WINDOW_WIDTH          1920
-#define ENGINE_WINDOW_HEIGHT         1080
 #define ENGINE_WINDOW_TITLE          "Arbor UI - GL Host"
 #define ENGINE_GL_VERSION_MAJOR      4
 #define ENGINE_GL_VERSION_MINOR      3
@@ -294,7 +293,8 @@ static void create_window_load_opengl() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, ENGINE_GL_VERSION_MINOR);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    window = glfwCreateWindow(ENGINE_WINDOW_WIDTH, ENGINE_WINDOW_HEIGHT, ENGINE_WINDOW_TITLE, NULL, NULL);
+    int width, height; initial_size(&width, &height);
+    window = glfwCreateWindow(width, height, ENGINE_WINDOW_TITLE, NULL, NULL);
     if (!window) {
         glfwTerminate(); return;
     }
@@ -611,6 +611,7 @@ static void draw_frame(arb_upload_access access, int width, int height) {
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_FRAMEBUFFER_SRGB);
 
     glUseProgram(shader_program);
 
