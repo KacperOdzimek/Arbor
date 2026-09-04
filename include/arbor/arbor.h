@@ -173,7 +173,7 @@ typedef void(arb_node_layout_func_signature)(
 );
 typedef arb_node_layout_func_signature* arb_node_layout_func;
 
-typedef void(arb_node_render_func_signature)(
+typedef void(arb_node_transform_func_signature)(
     const void*                     node_data,          // Node data
     void*                           storage_data,       // Storage data
     arb_mat3x2*                     transform,          // Given transform, can be changed
@@ -181,7 +181,7 @@ typedef void(arb_node_render_func_signature)(
     int                             resolution_x,       // Screen resolution x
     int                             resolution_y        // Screen resolution y
 );
-typedef arb_node_render_func_signature* arb_node_render_func;
+typedef arb_node_transform_func_signature* arb_node_transform_func;
 
 typedef void(arb_node_cursor_func_signature)(
     const void*                     node_data,          // Node data
@@ -257,7 +257,7 @@ typedef struct arb_type {
     // Allow altering children render transforms, top down
     // IN:  [complete layout states, parent render transform]
     // OUT: [own and children render transform]
-    arb_node_render_func    transform;
+    arb_node_transform_func transform;
 
     // Cursor Input
 
@@ -479,11 +479,11 @@ extern const arb_type arb_cursor_call_type;
 // Those can be used to add transforms, without writing a new node type
 
 // Transform handle type
-// Sets callback for children transform input nodes to own data (shall be arb_node_render_func)
+// Sets callback for children transform input nodes to own data (shall be arb_node_transform_func)
 extern const arb_type arb_transform_handle_type;
 
 // Cursor input type
-// Creates an transform box, which will call arb_node_render_func provided by parent handle type
+// Creates an transform box, which will call arb_node_transform_func provided by parent handle type
 extern const arb_type arb_transform_call_type;
 
 // ===========================
@@ -1502,7 +1502,7 @@ typedef struct render_dfs_subtree_state {
     short                   depth_index;
     int                     clipbox_index;
     arb_node_cursor_func    cursor_handle;
-    arb_node_render_func    transform_handle;
+    arb_node_transform_func    transform_handle;
     storage_cache_slot*     storage_slot;
     void*                   storage_data;
 } render_dfs_subtree_state;
@@ -1678,7 +1678,7 @@ static void render_dfs(
     }
     // Update trnasform handle for subtree
     else if (node->type == &arb_transform_handle_type) {
-        new_state.transform_handle = (arb_node_render_func)data;
+        new_state.transform_handle = (arb_node_transform_func)data;
     }
 
     // Clipbox flag
