@@ -162,7 +162,7 @@ typedef struct arb_node_layout_state {
 } arb_node_layout_state;
 
 // ===========================
-// Node Typedefs
+// Functions Typedefs
 
 typedef void(arb_node_layout_func_signature)(
     const void*                     node_data,          // Node data
@@ -192,6 +192,24 @@ typedef void(arb_node_cursor_func_signature)(
     int                             resolution_y        // Screen resolution y
 );
 typedef arb_node_cursor_func_signature* arb_node_cursor_func;
+
+// ===========================
+// Functions Declarations
+
+// Proper way to define layout funcs; Shortens code, allows changes
+#define ARB_NODE_LAYOUT_FUNC_DECL(func_name) \
+void func_name(const void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states)
+
+// Proper way to define transform funcs; Shortens code, allows changes
+#define ARB_NODE_TRANSFORM_FUNC_DECL(func_name) \
+void func_name(const void* node_data, void* storage_data, arb_mat3x2* transform,const arb_node_layout_state* layout, int resolution_x, int resolution_y)
+
+// Proper way to define cursor funcs; Shortens code, allows changes
+#define ARB_NODE_CURSOR_FUNC_DECL(func_name) \
+void func_name(const void* node_data, void* storage_data, arb_node_cursor_input* node_input, const arb_node_layout_state* layout, int resolution_x, int resolution_y)
+
+// ===========================
+// Node Typedefs
 
 typedef struct arb_type {
     // Structure
@@ -1898,13 +1916,7 @@ const arb_type arb_invalidation_type = box_behavior_type;
 // ===========================
 // Overlay Type
 
-void arb_overlay_width_measure_func(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_width_measure_func){
     (void)node_data; (void)storage_data; arb_length own = {0, 0, 0.0f};
 
     for (size_t i = 0; i < children_count; ++i) {
@@ -1917,13 +1929,7 @@ void arb_overlay_width_measure_func(
     node_state->measured_width = own;
 }
 
-void arb_overlay_width_distribute_func(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_width_distribute_func) {
     (void)node_data;
 
     for (size_t i = 0; i < children_count; ++i) {
@@ -1931,13 +1937,7 @@ void arb_overlay_width_distribute_func(
     }
 }
 
-void arb_overlay_height_measure_func(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_height_measure_func) {
     (void)node_data; arb_length own = {0, 0, 0.0f}; 
     for (size_t i = 0; i < children_count; ++i) {
         arb_length child = children_states[i]->measured_height;
@@ -1949,25 +1949,13 @@ void arb_overlay_height_measure_func(
     node_state->measured_height = own;
 }
 
-void arb_overlay_height_distribute_func(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_height_distribute_func) {
     (void)node_data; for (size_t i = 0; i < children_count; ++i) {
         children_states[i]->given_height = limit_length(node_state->given_height, children_states[i]->measured_height);
     }
 }
 
-void arb_overlay_position_func(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_position_func) {
     (void)node_data; for (size_t i = 0; i < children_count; ++i) {
         children_states[i]->hori_offset = 0;
         children_states[i]->vert_offset = 0;
@@ -2037,13 +2025,7 @@ const arb_type arb_storage_type = box_behavior_type;
 // ===========================
 // Align type
 
-static void align_position(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(align_position){
     const arb_align_data* data = node_data;
 
     // Position children in horizontal axis
@@ -2091,13 +2073,7 @@ static inline int padding_distribute_length(
     return remaining;
 }
 
-static void padding_width_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_measure) {
     const arb_padding_data* data = node_data;
     arb_length own = {0, 0, 0.0f};
     
@@ -2117,13 +2093,7 @@ static void padding_width_measure(
     };
 }
 
-static void padding_width_distribute(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_distribute) {
     if (children_count == 0) return;
     const arb_padding_data* data = node_data;
     arb_node_layout_state* child = children_states[0];
@@ -2146,13 +2116,7 @@ static void padding_width_distribute(
     child->hori_offset = (left_w - right_w) / 2;
 }
 
-static void padding_height_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(padding_height_measure) {
     const arb_padding_data* data = node_data;
     int child_min = 0, child_max = 0;
     if (children_count > 0) {
@@ -2170,13 +2134,7 @@ static void padding_height_measure(
     };
 }
 
-static void padding_height_distribute(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(padding_height_distribute) {
     if (children_count == 0) return;
     const arb_padding_data* data = node_data;
     arb_node_layout_state* child = children_states[0];
@@ -2212,13 +2170,7 @@ const arb_type arb_padding_type = {
 // ===========================
 // Sizebox Type
 
-static void sizebox_width_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(sizebox_width_measure) {
     const arb_sizebox_data* data = node_data;
     arb_overlay_width_measure_func(node_data, storage_data, node_state, children_count, children_states);
     if (data->flag & arb_sizebox_overwrite_width_min)   node_state->measured_width.min   = data->width.min;
@@ -2226,13 +2178,7 @@ static void sizebox_width_measure(
     if (data->flag & arb_sizebox_overwrite_width_flex)  node_state->measured_width.flex  = data->width.flex;
 }
 
-static void sizebox_height_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(sizebox_height_measure) {
     const arb_sizebox_data* data = node_data;
     arb_overlay_height_measure_func(node_data, storage_data, node_state, children_count, children_states);
     if (data->flag & arb_sizebox_overwrite_height_min)  node_state->measured_height.min  = data->height.min;
@@ -2253,13 +2199,7 @@ const arb_type arb_sizebox_type = {
 // ===========================
 // Row Type
 
-static void row_width_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(row_width_measure) {
     const arb_row_data* data = (const arb_row_data*)node_data;
     arb_length          own  = {0, 0, 0.0f};
 
@@ -2278,13 +2218,7 @@ static void row_width_measure(
     node_state->measured_width = own;
 }
 
-static void row_width_distribute(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(row_width_distribute) {
     const arb_row_data* data = (const arb_row_data*)node_data;
 
     // Find spaces count
@@ -2353,13 +2287,7 @@ static void row_width_distribute(
     }
 }
 
-static void row_position(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(row_position) {
     const arb_row_data* data = (const arb_row_data*)node_data;
 
     // Position children in vertial axis
@@ -2382,13 +2310,7 @@ const arb_type arb_row_type = {
 // ===========================
 // Column Type
 
-static void column_height_measure(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(column_height_measure) {
     const arb_column_data* data = (const arb_column_data*)node_data;
     arb_length             own  = {0, 0, 0.0f};
 
@@ -2407,13 +2329,7 @@ static void column_height_measure(
     node_state->measured_height = own;
 }
 
-static void column_height_distribute(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(column_height_distribute) {
     const arb_column_data* data = (const arb_column_data*)node_data;
 
     // Find spaces count
@@ -2482,13 +2398,7 @@ static void column_height_distribute(
     }
 }
 
-static void column_position(
-    const void*             node_data,
-    void*                   storage_data,
-    arb_node_layout_state*  node_state,
-    size_t                  children_count,
-    arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(column_position) {
     const arb_column_data* data = (const arb_column_data*)node_data;
 
     // Position children in horizontal axis
@@ -2516,10 +2426,7 @@ typedef struct button_storage {
     arb_box_data current;
 } button_storage;
 
-static void button_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(button_cursor_func) {
     const arb_button_data*   data   = node_data;
     const arb_button_style*  style  = data->style;
     const arb_button_target* target = data->target;
@@ -2577,10 +2484,7 @@ typedef struct scrollbox_storage {
 
 static const float scroll_speed_vertical = 2500;
 
-static void vertical_scrollbox_scroll_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
@@ -2588,10 +2492,7 @@ static void vertical_scrollbox_scroll_cursor_func(
     }
 }
 
-static void vertical_scrollbox_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_transform_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
 
     // Calculate offset
@@ -2626,9 +2527,7 @@ static void vertical_scrollbox_transform_func(
     if (handle_height > stor->display_pixels) handle_height = stor->display_pixels;
 }
 
-static void vertical_scrollbox_position(
-    const void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(vertical_scrollbox_position) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
     arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
@@ -2646,10 +2545,7 @@ static const arb_type vertical_scrollbox_scroller_type = {
     .transform  = vertical_scrollbox_transform_func
 };
 
-static void vertical_scrollbox_handle_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_handle_transform_func) {
     scrollbox_storage* stor = storage_data;
 
     if (!stor->content_pixels) {
@@ -2689,10 +2585,7 @@ static void vertical_scrollbox_handle_transform_func(
     *transform = arb_mat3x2_scale(*transform, 1, sy);
 }
 
-static void vertical_scrollbox_handle_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
     const arb_scrollbox_data*  data  = node_data; 
     const arb_scrollbox_style* style = data->style;
     scrollbox_storage*         stor  = storage_data;
@@ -2820,10 +2713,7 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 
 static const float scroll_speed_horizontal = 3500;
 
-static void horizontal_scrollbox_scroll_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
@@ -2831,10 +2721,7 @@ static void horizontal_scrollbox_scroll_cursor_func(
     }
 }
 
-static void horizontal_scrollbox_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_transform_func) {
     scrollbox_storage* stor = storage_data;
 
     // Calculate offset
@@ -2869,9 +2756,7 @@ static void horizontal_scrollbox_transform_func(
     if (handle_width > stor->display_pixels) handle_width = stor->display_pixels;
 }
 
-static void horizontal_scrollbox_position(
-    const void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states
-) {
+static ARB_NODE_LAYOUT_FUNC_DECL(horizontal_scrollbox_position) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
     arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
@@ -2889,10 +2774,7 @@ static const arb_type horizontal_scrollbox_scroller_type = {
     .transform  = horizontal_scrollbox_transform_func
 };
 
-static void horizontal_scrollbox_handle_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_handle_transform_func) {
     scrollbox_storage* stor = storage_data;
 
     if (!stor->content_pixels) {
@@ -2932,10 +2814,7 @@ static void horizontal_scrollbox_handle_transform_func(
     *transform = arb_mat3x2_scale(*transform, sx, 1);
 }
 
-static void horizontal_scrollbox_handle_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
     const arb_scrollbox_data*   data  = node_data; 
     const arb_scrollbox_style*  style = data->style;
     scrollbox_storage*          stor  = storage_data;
@@ -3061,7 +2940,6 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
 // ===========================
 // Float Slider
 
-
 typedef struct float_slider_storage {
     int          is_during_drag;
     int          last_drag_pixel;  // Raw cursor pixel (x or y, per axis) at last processed frame of the drag
@@ -3069,10 +2947,7 @@ typedef struct float_slider_storage {
 } float_slider_storage;
 
 #define FLOAT_SLIDER_SCROLL_SPEED 0.6f  // fraction of (max-min) per second, per unit scroll_delta
-static void float_slider_cursor_func(
-    const void* node_data, void* storage_data, arb_node_cursor_input* node_input,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_CURSOR_FUNC_DECL(float_slider_cursor_func) {
     const arb_float_slider_data*   dat = node_data;
     const arb_float_slider_style*  stl = dat->style;
     const arb_float_slider_target* tar = dat->target;
@@ -3134,10 +3009,7 @@ static void float_slider_cursor_func(
     node_input->mutable_state->left_down = 0;
 }
 
-static void float_slider_transform_func(
-    const void* node_data, void* storage_data, arb_mat3x2* transform,
-    const arb_node_layout_state* layout, int resolution_x, int resolution_y
-) {
+static ARB_NODE_TRANSFORM_FUNC_DECL(float_slider_transform_func) {
     const arb_float_slider_data*   dat = node_data;
     const arb_float_slider_style*  stl = dat->style;
     const arb_float_slider_target* tar = dat->target;
