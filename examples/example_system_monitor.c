@@ -19,10 +19,10 @@ static void refresh_on_clicked(void* payload);
 
 static const arb_box_data style_bg = { .tint = ARB_HEX("#1b1e24") };
 
-static const arb_box_data panel_cpu = { .tint = ARB_HEX("#233042"), .rounding = 18 };
-static const arb_box_data panel_ram = { .tint = ARB_HEX("#243b2c"), .rounding = 18 };
-static const arb_box_data panel_gpu = { .tint = ARB_HEX("#3d3320"), .rounding = 18 };
-static const arb_box_data panel_temp = { .tint = ARB_HEX("#452626"), .rounding = 18 }; // Deep red for temp
+static const arb_box_data panel_cpu  = { .tint = ARB_HEX("#233042"), .rounding = 18 };
+static const arb_box_data panel_ram  = { .tint = ARB_HEX("#243b2c"), .rounding = 18 };
+static const arb_box_data panel_gpu  = { .tint = ARB_HEX("#3d3320"), .rounding = 18 };
+static const arb_box_data panel_temp = { .tint = ARB_HEX("#452626"), .rounding = 18 };
 
 static const arb_box_data style_refresh_btn_default = { .tint = ARB_HEX("#3a4150"), .rounding = 10 };
 static const arb_box_data style_refresh_btn_hovered = { .tint = ARB_HEX("#4a5566"), .rounding = 10 };
