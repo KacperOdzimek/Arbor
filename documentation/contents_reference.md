@@ -147,7 +147,7 @@ min/max/flex) are overwritten; `arb_sizebox_overwrite_all_width`,
 `arb_sizebox_overwrite_all_height`, and `arb_sizebox_overwrite_all` are
 provided as combined masks.
 
-### `arb_aling_type`
+### `arb_align_type`
 Aligns content within the space this node is given, applied in the
 position pass. Single child. Intended to be paired with
 `arb_flag_ignore_max_width`/`height` on this node so there is spare space
@@ -255,7 +255,7 @@ scrolled content, injected the same way as the button's.
 ### `arb_float_slider_structure`
 A draggable, scroll-adjustable fill-slider bound to a `float` target,
 combining storage (drag state and current style), the cursor system (drag
-and scroll-wheel handling), and the transform system (scaling the visual
+and scroll-wheel handling), and the transform system (scalign the visual
 fill to the current value). Fills all given space (`flex = 1`, `max = inf`).
 
 ```c

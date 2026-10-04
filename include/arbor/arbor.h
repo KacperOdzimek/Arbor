@@ -456,7 +456,7 @@ typedef struct arb_sizebox_data {
 // Note align is applied inside align node given space
 // Therefore align node shall be used with 
 // arb_flag_ignore_max_width/height, to gain space to align in
-extern const arb_type arb_aling_type;
+extern const arb_type arb_align_type;
 typedef struct arb_align_data {
     float vertical_align;   // 0 - align top,  0.5 - align center, 1.0 - align bottom, other values also work 
     float horizontal_align; // 0 - align left,  0.5 - align center, 1.0 - align right, other values also work
@@ -2044,7 +2044,7 @@ static ARB_NODE_LAYOUT_FUNC_DECL(align_position){
     }
 }
 
-const arb_type arb_aling_type = {
+const arb_type arb_align_type = {
     ARB_TYPE_OVERLAY_INIT,
     .position = align_position
 };
@@ -2634,7 +2634,7 @@ static const arb_type vertical_scrollbox_handle_type = {
 
 const arb_node vertical_scrollbox_main_body[] = {
     {   // Align node
-        .type  = &arb_aling_type,
+        .type  = &arb_align_type,
         .flags = arb_flag_ignore_max_height,
         .data  = &(arb_align_data){
             .horizontal_align = 0,
@@ -2863,7 +2863,7 @@ static const arb_type horizontal_scrollbox_handle_type = {
 
 const arb_node horizontal_scrollbox_main_body[] = {
     {   // Align node
-        .type  = &arb_aling_type,
+        .type  = &arb_align_type,
         .flags = arb_flag_ignore_max_width,
         .data  = &(arb_align_data){
             .horizontal_align = 0,

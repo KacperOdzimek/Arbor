@@ -116,7 +116,7 @@ const arb_node shop_label[] = {
         ),
         ARB_ELEM(   // Owned count, pushed to the right edge
             ARB_NODE(
-                arb_aling_type, 
+                arb_align_type, 
                 arb_flag_ignore_max_width | arb_flag_ignore_max_height, 
                 &(arb_align_data){
                     .vertical_align = 0.5f, 
