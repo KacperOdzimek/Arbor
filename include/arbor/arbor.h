@@ -2486,7 +2486,7 @@ static const float scroll_speed_vertical = 2500;
 
 static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
-    if (node_input->hovered) {
+    if (node_input->raw_hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
         stor->position -= pixel_change;
     }
@@ -2715,7 +2715,7 @@ static const float scroll_speed_horizontal = 3500;
 
 static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
-    if (node_input->hovered) {
+    if (node_input->raw_hovered) {
         float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
         stor->position += pixel_change;
     }
