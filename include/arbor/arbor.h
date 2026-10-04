@@ -248,7 +248,7 @@ typedef struct arb_type {
     // Fifth layout stage
     // Position nodes on screen, top-down
     // IN:  [all widths and heights]
-    // OUT: [node offset from ]
+    // OUT: [node offset from center]
     arb_node_layout_func    position;
 
     // Rendering Stages
