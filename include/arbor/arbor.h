@@ -1883,6 +1883,9 @@ arb_upload_access arb_cache_free_all_text(
     cache->frame_index = LAST_FRAME_USED_IMPOSIBLE;
     text_cache_hashmap_garbage_collect(cache);
 
+    // Set count to 0
+    cache->text_free_requests_count = 0;
+
     // Return access to text free requests
     return (arb_upload_access){
         .text_free_count    = cache->text_free_requests_count,
@@ -2432,22 +2435,22 @@ static ARB_NODE_CURSOR_FUNC_DECL(button_cursor_func) {
     const arb_button_target* target = data->target;
     button_storage*          stor   = storage_data;
 
-    arb_cursor_state crr = *node_input->mutable_state;
-    arb_cursor_state prv = *node_input->prev_raw_state;
+    arb_cursor_state* crr =  node_input->mutable_state;
+    arb_cursor_state  prv = *node_input->prev_raw_state;
 
-    char just_pressed  = crr.left_down  && !prv.left_down;
-    char just_released = !crr.left_down && prv.left_down;
+    char just_pressed  = crr->left_down  && !prv.left_down;
+    char just_released = !crr->left_down && prv.left_down;
 
     if (just_pressed && node_input->hovered) {  // press started
         stor->pressed = 1;
         stor->current = *style->pressed_style;
         if (target->on_clicked) target->on_clicked(target->payload);
-        crr.left_down = 0;
+        crr->left_down = 0;
     }
-    else if (crr.left_down && stor->pressed) {    // held
+    else if (crr->left_down && stor->pressed) {    // held
         stor->current = *style->pressed_style;
         if (target->on_held) target->on_held(target->payload);
-        crr.left_down = 0;
+        crr->left_down = 0;
     }
     else if (just_released && stor->pressed) {   // released
         stor->pressed = 0;
