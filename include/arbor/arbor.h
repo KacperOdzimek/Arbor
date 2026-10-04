@@ -1276,7 +1276,7 @@ static inline void caches_walk_order_push(
 
 // Pushes all child nodes caches of node to caches_walk_order
 // Recurse into children left to right; Retuns subtree size
-size_t caches_walk_dfs(
+static size_t caches_walk_dfs(
     caches_walk_order*  walk_order, 
     cache_slot*         current, 
     const void*         instance,
@@ -2633,81 +2633,48 @@ static const arb_type vertical_scrollbox_handle_type = {
 };
 
 const arb_node vertical_scrollbox_main_body[] = {
-    {   // Align node
-        .type  = &arb_align_type,
-        .flags = arb_flag_ignore_max_height,
-        .data  = &(arb_align_data){
-            .horizontal_align = 0,
-            .vertical_align   = 0
-        }
-    },
-    {   // Scroller Node
-        .type  = &vertical_scrollbox_scroller_type,
-        .flags = arb_flag_instanced_data | arb_flag_ignore_min_height,
-        .data_offset = 0, // Scrollbox data itself 
-    },
-    {   // Child
-        .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data | arb_flag_indirected_data,
-        .data_offset = offsetof(arb_scrollbox_data, child)
-    }
+    // Align node
+    ARB_NODE(arb_align_type, arb_flag_ignore_max_height, &(arb_align_data){
+        .horizontal_align = 0,
+        .vertical_align   = 0
+    }),
+    // Scroller node, data = scrollbox data itself
+    ARB_NODE(vertical_scrollbox_scroller_type, arb_flag_instanced_data | arb_flag_ignore_min_height, 0),
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_scrollbox_data, child))
 };
 
 const arb_node vertical_scrollbox_handle[] = {
-    {   // Require handle width
-        .type  = &arb_sizebox_type,
-        .data  = &(arb_sizebox_data){
-            .flag  = arb_sizebox_overwrite_all_width,
-            .width = (arb_length){16, 16, 1}
-        },
-    },
-    {   // Handle Node
-        .type  = &vertical_scrollbox_handle_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = 0 // Scrollbox data itself
-    },
-    {   // Handle visual
-        .type  = &arb_box_type,
-        .flags = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset = offsetof(scrollbox_storage, current_handle_style)
-    },
+    // Require handle width
+    ARB_NODE(arb_sizebox_type, arb_flag_none, &(arb_sizebox_data){
+        .flag  = arb_sizebox_overwrite_all_width,
+        .width = (arb_length){16, 16, 1}
+    }),
+    // Handle node, data = scrollbox data itself
+    ARB_NODE(vertical_scrollbox_handle_type, arb_flag_instanced_data, 0),
+    // Handle visual
+    ARB_NODE(
+        arb_box_type,
+        arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        offsetof(scrollbox_storage, current_handle_style)
+    ),
     ARB_LAST
 };
 
 const arb_node arb_vertical_scrollbox_structure[] = {
-    {   // Storage for state
-        .type = &arb_storage_type,
-        .data_offset = sizeof(scrollbox_storage)
-    },
-    {   // Clipbox
-        .type  = &arb_box_type,
-        .flags = arb_flag_clipbox | arb_flag_ignore_min_height,
-        .data  = &(arb_box_data){.tint = ARB_HEX("#00000000")}
-    },
-    {   // Handle for scroll input
-        .type  = &arb_cursor_handle_type,
-        .data  = vertical_scrollbox_scroll_cursor_func,
-    },
-    {   // Scroll Input
-        .type  = &arb_cursor_call_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = 0 // Scrollbox data itself
-    },
-    {   // Row content-handle
-        .type  = &arb_row_type,
-        .data  = &(arb_row_data){
-            .spacing        = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
-            .vertical_align = 0.5
-        }
-    },
-    {   // Content
-        .type = &arb_indirect_type,
-        .data = (void*)vertical_scrollbox_main_body,
-    },
-    {   // Handle
-        .type = &arb_indirect_type,
-        .data = (void*)vertical_scrollbox_handle,
-    },
+    // Storage for state
+    ARB_NODE(arb_storage_type, arb_flag_none, sizeof(scrollbox_storage)),
+    // Clipbox
+    ARB_NODE(arb_box_type, arb_flag_clipbox | arb_flag_ignore_min_height, &(arb_box_data){.tint = ARB_HEX("#00000000")}),
+    // Scroll input
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, vertical_scrollbox_scroll_cursor_func),
+    ARB_NODE(arb_cursor_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
+    // Row - content/handle
+    ARB_NODE(arb_row_type, arb_flag_none, &(arb_row_data){
+        .spacing        = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
+        .vertical_align = 0.5
+    }),
+    ARB_IDIR(vertical_scrollbox_main_body),
+    ARB_IDIR(vertical_scrollbox_handle),
     ARB_LAST
 };
 
@@ -2862,81 +2829,48 @@ static const arb_type horizontal_scrollbox_handle_type = {
 };
 
 const arb_node horizontal_scrollbox_main_body[] = {
-    {   // Align node
-        .type  = &arb_align_type,
-        .flags = arb_flag_ignore_max_width,
-        .data  = &(arb_align_data){
-            .horizontal_align = 0,
-            .vertical_align   = 0
-        }
-    },
-    {   // Scroller Node
-        .type  = &horizontal_scrollbox_scroller_type,
-        .flags = arb_flag_instanced_data | arb_flag_ignore_min_width,
-        .data_offset = 0, // Scrollbox data itself 
-    },
-    {   // Child
-        .type  = &arb_indirect_type,
-        .flags = arb_flag_instanced_data | arb_flag_indirected_data,
-        .data_offset = offsetof(arb_scrollbox_data, child)
-    }
+    // Align node
+    ARB_NODE(arb_align_type, arb_flag_ignore_max_width, &(arb_align_data){
+        .horizontal_align = 0,
+        .vertical_align   = 0
+    }),
+    // Scroller node, data = scrollbox data itself
+    ARB_NODE(horizontal_scrollbox_scroller_type, arb_flag_instanced_data | arb_flag_ignore_min_width, 0),
+    ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_scrollbox_data, child))
 };
 
 const arb_node horizontal_scrollbox_handle[] = {
-    {   // Require handle height
-        .type  = &arb_sizebox_type,
-        .data  = &(arb_sizebox_data){
-            .flag   = arb_sizebox_overwrite_all_height,
-            .height = (arb_length){16, 16, 1}
-        },
-    },
-    {   // Handle Node
-        .type  = &horizontal_scrollbox_handle_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = 0 // Scrollbox data itself
-    },
-    {   // Handle visual
-        .type  = &arb_box_type,
-        .flags = arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
-        .data_offset = offsetof(scrollbox_storage, current_handle_style)
-    },
+    // Require handle height
+    ARB_NODE(arb_sizebox_type, arb_flag_none, &(arb_sizebox_data){
+        .flag   = arb_sizebox_overwrite_all_height,
+        .height = (arb_length){16, 16, 1}
+    }),
+    // Handle node, data = scrollbox data itself
+    ARB_NODE(horizontal_scrollbox_handle_type, arb_flag_instanced_data, 0),
+    // Handle visual
+    ARB_NODE(
+        arb_box_type,
+        arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height,
+        offsetof(scrollbox_storage, current_handle_style)
+    ),
     ARB_LAST
 };
 
 const arb_node arb_horizontal_scrollbox_structure[] = {
-    {   // Storage for state
-        .type = &arb_storage_type,
-        .data_offset = sizeof(scrollbox_storage)
-    },
-    {   // Clipbox
-        .type  = &arb_box_type,
-        .flags = arb_flag_clipbox | arb_flag_ignore_min_width,
-        .data  = &(arb_box_data){.tint = ARB_HEX("#00000000")}
-    },
-    {   // Handle for scroll input
-        .type  = &arb_cursor_handle_type,
-        .data  = horizontal_scrollbox_scroll_cursor_func,
-    },
-    {   // Scroll Input
-        .type  = &arb_cursor_call_type,
-        .flags = arb_flag_instanced_data,
-        .data_offset = 0 // Scrollbox data itself
-    },
-    {   // Column content-handle
-        .type  = &arb_column_type,
-        .data  = &(arb_column_data){
-            .spacing          = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
-            .horizontal_align = 0.5
-        }
-    },
-    {   // Content
-        .type = &arb_indirect_type,
-        .data = (void*)horizontal_scrollbox_main_body,
-    },
-    {   // Handle
-        .type = &arb_indirect_type,
-        .data = (void*)horizontal_scrollbox_handle,
-    },
+    // Storage for state
+    ARB_NODE(arb_storage_type, arb_flag_none, sizeof(scrollbox_storage)),
+    // Clipbox
+    ARB_NODE(arb_box_type, arb_flag_clipbox | arb_flag_ignore_min_width, &(arb_box_data){.tint = ARB_HEX("#00000000")}),
+    // Scroll input
+    ARB_NODE(arb_cursor_handle_type, arb_flag_none, horizontal_scrollbox_scroll_cursor_func),
+    ARB_NODE(arb_cursor_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
+    // Column - content/handle
+    ARB_NODE(arb_column_type, arb_flag_none, &(arb_column_data){
+        .spacing          = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
+        .horizontal_align = 0.5
+    }),
+    ARB_IDIR(horizontal_scrollbox_main_body),
+    ARB_IDIR(horizontal_scrollbox_handle),
     ARB_LAST
 };
 
