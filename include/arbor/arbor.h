@@ -1268,7 +1268,7 @@ static inline void caches_walk_order_push(
 
     walk_order->variables[walk_order->position] = variable;
     walk_order->slots    [walk_order->position] = slot;
-    walk_order->storages [walk_order->position] = storage_slot,
+    walk_order->storages [walk_order->position] = storage_slot;
     walk_order->states   [walk_order->position] = &slot->value_state;
     walk_order->subtree  [walk_order->position] = 0;
     walk_order->position++;
