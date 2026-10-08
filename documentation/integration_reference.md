@@ -36,13 +36,14 @@ void arb_free_cache(arb_cache*);
 The cache is advanced with:
 
 ```c
-arb_upload_access arb_cache_update(
+void arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
     int                 resolution_y,
     arb_cursor_state    cursor_state,
-    float               delta_time
+    float               delta_time,
+    arb_requests*       out_requests
 );
 ```
 
@@ -55,7 +56,7 @@ storage blocks all live inside the cache instance.
 
 - A single `arb_cache` is not internally synchronized. Concurrent calls to
   `arb_cache_update` on the same cache, or concurrent access to a
-  previously returned `arb_upload_access` from another thread, is undefined
+  previously returned `arb_requests` from another thread, is undefined
   behavior. The host must serialize all access to a given cache — for
   example, by confining a cache to a single thread, or by guarding it with
   an external lock.
@@ -75,25 +76,38 @@ storage blocks all live inside the cache instance.
 ## 4. Upload Access
 
 ```c
-typedef struct arb_upload_access {
+typedef struct arb_requests {
+    // Resolution UI was layed for
     uint32_t                        resolution_x;
     uint32_t                        resolution_y;
 
+    // Minimum desired UI
+    uint32_t                        minimum_x;
+    uint32_t                        minimum_y;
+
+    // Maximum UI size
+    uint32_t                        maximum_x;
+    uint32_t                        maximum_y;
+
+    // Text free requests
     size_t                          text_free_count;
     const arb_text_free_request*    text_free_requests;
 
+    // Text allocation requests
     size_t                          text_alloc_count;
     const arb_text_alloc_request*   text_alloc_requests;
 
+    // Clipboxes requests
     size_t                          clipboxes_count;
     const arb_clipbox_request*      clipboxes_requests;
 
+    // Draws requests
     size_t                          draws_count;
     const arb_draw_request*         draws_requests;
-} arb_upload_access;
+} arb_requests;
 ```
 
-The `arb_upload_access` returned from ``arb_cache_update`` contains pointers into render lists owned by the cache. 
+The `arb_requests` returned from ``arb_cache_update`` contains pointers into render lists owned by the cache. 
 These pointers must not be freed by the caller, but may be read. 
 They remain valid only until the next call to `arb_cache_update` on the same cache — after that call, all previously returned pointers are invalidated and must not be dereferenced.
 

@@ -632,22 +632,35 @@ typedef struct arb_draw_request {
 // ===========================
 // Upload Access
 
-typedef struct arb_upload_access {
-    uint32_t                        resolution_x;
-    uint32_t                        resolution_y;
+typedef struct arb_requests {
+    // Resolution UI was layed for
+    uint32_t resolution_x;
+    uint32_t resolution_y;
 
+    // Minimum desired UI
+    uint32_t minimum_x;
+    uint32_t minimum_y;
+
+    // Maximum UI size
+    uint32_t maximum_x;
+    uint32_t maximum_y;
+
+    // Text free requests
     size_t                          text_free_count;
     const arb_text_free_request*    text_free_requests;
 
+    // Text allocation requests
     size_t                          text_alloc_count;
     const arb_text_alloc_request*   text_alloc_requests;
 
+    // Clipboxes requests
     size_t                          clipboxes_count;
     const arb_clipbox_request*      clipboxes_requests;
 
+    // Draws requests
     size_t                          draws_count;
     const arb_draw_request*         draws_requests;
-} arb_upload_access;
+} arb_requests;
 
 // ===========================
 // Cache
@@ -658,20 +671,22 @@ void arb_free_cache(arb_cache*);
 // Function updating UI
 // Returns structure allowing access to cache-owned upload/render lists
 // The pointers will be valid until arb_cache_update is called again
-arb_upload_access arb_cache_update(
+void arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
     int                 resolution_y,
     arb_cursor_state    cursor_state,
-    float               delta_time
+    float               delta_time,
+    arb_requests*       out_requests
 );
 
 // Can be called before free cache
 // To get free text requests, if user
 // is willing to clean the glyphs buffer
-arb_upload_access arb_cache_free_all_text(
-    arb_cache*          cache
+void arb_cache_free_all_text(
+    arb_cache*          cache,
+    arb_requests*       out_requests
 );
 
 #endif // ARBOR_H
@@ -1719,14 +1734,18 @@ static inline int helper_free_requests_compare_value(const void* av, const void*
 }
 
 // Main update function, calls passes
-arb_upload_access arb_cache_update(
+void arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
     int                 resolution_y,
     arb_cursor_state    cursor_state,
-    float               delta_time
+    float               delta_time,
+    arb_requests*       out_requests
 ) {
+    // Clear output in case of early return
+    *out_requests = (arb_requests){0};
+
     // Walk order for remeasure
     caches_walk_order walk_order = {.cache = cache};
 
@@ -1735,8 +1754,7 @@ arb_upload_access arb_cache_update(
     // May happen when allocation failed, then we opt-out
     int setjmp_val = setjmp(cache->emergency);
     if (setjmp_val == emergency_jump_flag_allocation_failure) {
-        free_caches_walk_order(&walk_order);
-        return (arb_upload_access){0};
+        free_caches_walk_order(&walk_order); return;
     }
     else if (setjmp_val == emergency_jump_flag_grow_occured) {
         walk_order.position = 0; // and redo everyting
@@ -1803,31 +1821,29 @@ arb_upload_access arb_cache_update(
     // Current state in now previous cursor state
     cache->previous_frame_cursor_state = cursor_state;
 
-    // Always relayout
+    // Relayout sequence begin
     // Do it after render - then we can trust all nodes have their inserted cache and auxilary slots
     // This is important so hashmap pointers does not get invalidated during passes
     // This means we are one frame behind with layout, but it is not a big deal actually.
-    if (1) {
-        cache_slot* root_cache = cache_hashmap_get(cache, (node_stable_index){root, NULL});
+    cache_slot* root_cache = cache_hashmap_get(cache, (node_stable_index){root, NULL});
 
-        // Give root entire screen
-        // Will auto bound to desired at distribute
-        root_cache->value_state.given_width  = resolution_x;
-        root_cache->value_state.given_height = resolution_y;
+    // Give root entire screen
+    // Will auto bound to desired at distribute
+    root_cache->value_state.given_width  = resolution_x;
+    root_cache->value_state.given_height = resolution_y;
 
-        // Find walk order
-        size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL, NULL);
-        
-        // Perform all passes
-        text_gen_dfs(&walk_order, root_cache, NULL, NULL, 0);
-        width_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
-        width_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
-        height_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
-        height_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
-        position_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    // Find walk order
+    size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL, NULL);
+    
+    // Perform all passes
+    text_gen_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    width_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    width_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    height_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    height_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
+    position_dfs(&walk_order, root_cache, NULL, NULL, 0);
 
-        free_caches_walk_order(&walk_order);
-    }
+    free_caches_walk_order(&walk_order);
 
     // Garbage collect dead cache entries
     // If entry was not used in render, mark it free
@@ -1858,9 +1874,15 @@ arb_upload_access arb_cache_update(
     );
 
     // Return upload access
-    return (arb_upload_access){
+    *out_requests = (arb_requests){
         .resolution_x        = cache->resolution_x,
         .resolution_y        = cache->resolution_y,
+
+        .minimum_x           = root_cache->value_state.measured_width.min,
+        .minimum_y           = root_cache->value_state.measured_height.min,
+
+        .maximum_x           = root_cache->value_state.measured_width.max,
+        .maximum_y           = root_cache->value_state.measured_height.max,
 
         .text_free_count     = cache->text_free_requests_count - erased_requests,
         .text_free_requests  = cache->text_free_requests,
@@ -1876,8 +1898,9 @@ arb_upload_access arb_cache_update(
     };
 }
 
-arb_upload_access arb_cache_free_all_text(
-    arb_cache*          cache
+void arb_cache_free_all_text(
+    arb_cache*          cache,
+    arb_requests*       out_requests
 ) {
     // Free all cached texts by using impossible value
     cache->frame_index = LAST_FRAME_USED_IMPOSIBLE;
@@ -1887,7 +1910,7 @@ arb_upload_access arb_cache_free_all_text(
     cache->text_free_requests_count = 0;
 
     // Return access to text free requests
-    return (arb_upload_access){
+    *out_requests = (arb_requests){
         .text_free_count    = cache->text_free_requests_count,
         .text_free_requests = cache->text_free_requests
     };

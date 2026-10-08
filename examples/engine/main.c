@@ -135,7 +135,6 @@ typedef struct gpu_glyph {
     float       size_x, size_y;     // Pixel dimensions
 } gpu_glyph;
 
-
 // ===========================
 // 3. Data Structures
 // Definied here, so can be used by renderer
@@ -219,6 +218,12 @@ static arb_cache*  ui_cache;
 static float       g_scroll_delta_x = 0.0f;
 static float       g_scroll_delta_y = 0.0f;
 
+// Last window size limits we pushed to GLFW (as reported by Arbor, in framebuffer pixels).
+// Used so we only call into GLFW when the UI's requirements actually change.
+static uint32_t    g_applied_min_x = UINT32_MAX, g_applied_min_y = UINT32_MAX;
+static uint32_t    g_applied_max_x = UINT32_MAX, g_applied_max_y = UINT32_MAX;
+static int         g_applied_limits_valid = 0;
+
 // Rendering itself / API
 static GLuint ssbo_instances, ssbo_draw_items, ssbo_clipboxes, ssbo_glyphs;
 static GLuint shader_program;
@@ -245,9 +250,10 @@ static glyph_allocator    g_glyph_alloc;
 // Window / GL context
 static void     create_window_load_opengl();
 static void     scroll_callback(GLFWwindow* w, double xoffset, double yoffset);
+static void     apply_window_size_limits(const arb_requests* access);
 
 // Rendering itself / API
-static void     draw_frame(arb_upload_access access, int width, int height);
+static void     draw_frame(arb_requests access, int width, int height);
 static void     init_buffers();
 static void     shutdown_buffers();
 static GLuint   compile_shader(GLenum type, const char* source, const char* filepath);
@@ -302,6 +308,47 @@ static void create_window_load_opengl() {
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glfwSetScrollCallback(window, scroll_callback);
+}
+
+// Arbor reports its layout constraints in framebuffer pixels, while GLFW's size
+// limits are in screen coordinates. On most setups these are identical, but on
+// HiDPI platforms (e.g. macOS Retina) they differ, so we convert using the
+// current framebuffer-to-window ratio.
+//
+// A value of 0 means "no constraint" for that bound. UINT32_MAX is treated the
+// same way for the maximums, so either convention works.
+static void apply_window_size_limits(const arb_requests* access) {
+    if (g_applied_limits_valid &&
+        access->minimum_x == g_applied_min_x && access->minimum_y == g_applied_min_y &&
+        access->maximum_x == g_applied_max_x && access->maximum_y == g_applied_max_y) {
+        return; // nothing changed
+    }
+
+    int win_w, win_h, fb_w, fb_h;
+    glfwGetWindowSize(window, &win_w, &win_h);
+    glfwGetFramebufferSize(window, &fb_w, &fb_h);
+
+    // Pixels -> screen coordinates scale (1.0 on non-HiDPI setups)
+    float sx = (fb_w > 0 && win_w > 0) ? (float)win_w / (float)fb_w : 1.0f;
+    float sy = (fb_h > 0 && win_h > 0) ? (float)win_h / (float)fb_h : 1.0f;
+
+    int min_w = access->minimum_x ? (int)(access->minimum_x * sx + 0.5f) : GLFW_DONT_CARE;
+    int min_h = access->minimum_y ? (int)(access->minimum_y * sy + 0.5f) : GLFW_DONT_CARE;
+    int max_w = (access->maximum_x && access->maximum_x != UINT32_MAX)
+                    ? (int)(access->maximum_x * sx + 0.5f) : GLFW_DONT_CARE;
+    int max_h = (access->maximum_y && access->maximum_y != UINT32_MAX)
+                    ? (int)(access->maximum_y * sy + 0.5f) : GLFW_DONT_CARE;
+
+    // GLFW raises an error if min > max on an axis, so make the maximum win
+    // the tie rather than passing an invalid combination.
+    if (min_w != GLFW_DONT_CARE && max_w != GLFW_DONT_CARE && min_w > max_w) min_w = max_w;
+    if (min_h != GLFW_DONT_CARE && max_h != GLFW_DONT_CARE && min_h > max_h) min_h = max_h;
+
+    glfwSetWindowSizeLimits(window, min_w, min_h, max_w, max_h);
+
+    g_applied_min_x = access->minimum_x; g_applied_min_y = access->minimum_y;
+    g_applied_max_x = access->maximum_x; g_applied_max_y = access->maximum_y;
+    g_applied_limits_valid = 1;
 }
 
 static void term_main();
@@ -361,9 +408,12 @@ static void frame_main() {
 
     // Here we update our UI geometry
     // Returned access contains pointers to render lists
-    arb_upload_access access = arb_cache_update(
-        ui_cache, main_structure, width, height, cursor_state, ENGINE_DELTA_TIME
+    arb_requests access; arb_cache_update(
+        ui_cache, main_structure, width, height, cursor_state, ENGINE_DELTA_TIME, &access
     );
+
+    // The UI may now require a different minimum/maximum window size
+    apply_window_size_limits(&access);
 
     // Issue rendering
     draw_frame(access, width, height);
@@ -482,7 +532,7 @@ static GLuint load_shaders(const char* vertex_path, const char* fragment_path) {
 // ===========================
 // 7. Rendering Itself
 
-static void draw_frame(arb_upload_access access, int width, int height) {
+static void draw_frame(arb_requests access, int width, int height) {
     // Process text frees
     for (size_t i = 0; i < access.text_free_count; i++) {
         text_allocation* alloc = (text_allocation*)access.text_free_requests[i].text_pointer;
