@@ -285,7 +285,6 @@ typedef enum arb_flag {
 typedef struct arb_node {
     const arb_type* type;
     uint32_t        flags;
-
     union {
         const void*  data;
         size_t       data_offset;
