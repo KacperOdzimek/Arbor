@@ -401,6 +401,10 @@ static void frame_main() {
         .position_y   = (int)cursor_y,
         .scroll_delta = g_scroll_delta_y
     };
+    arb_input_state input_state = {
+        .cursor     = cursor_state,
+        .typewriter = {}
+    };
 
     // Reset scroll deltas
     g_scroll_delta_x = 0.0f;
@@ -409,7 +413,7 @@ static void frame_main() {
     // Here we update our UI geometry
     // Returned access contains pointers to render lists
     arb_requests access; arb_cache_update(
-        ui_cache, main_structure, width, height, cursor_state, ENGINE_DELTA_TIME, &access
+        ui_cache, main_structure, width, height, input_state, ENGINE_DELTA_TIME, &access
     );
 
     // The UI may now require a different minimum/maximum window size

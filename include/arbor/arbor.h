@@ -91,7 +91,7 @@ static inline arb_mat3x2 arb_mat3x2_offset(arb_mat3x2 m, float ox, float oy) {
 // ===========================
 // Colors
 
-// basic 32 bit color
+// Basic 32 bit color
 typedef struct arb_color {
     unsigned char r, g, b, a;
 } arb_color;
@@ -130,24 +130,33 @@ static inline arb_color arb_hex(const char *hex) {
 }
 
 // ===========================
-// Cursor
+// Input
 
 typedef struct arb_cursor_state {
-    int     left_down,  right_down;
-    int     position_x, position_y;
-    float   scroll_delta;
+    int                     left_down,  right_down;
+    int                     position_x, position_y;
+    float                   scroll_delta;
 } arb_cursor_state;
 
-typedef struct arb_node_cursor_input {
+typedef struct arb_typewriter_state {
+    const char*             utf8_input;
+} arb_typewriter_state;
+
+typedef struct arb_input_state {
+    arb_cursor_state        cursor;
+    arb_typewriter_state    typewriter;
+} arb_input_state;
+
+typedef struct arb_node_input_state {
     int                     resolution_x;       // Resolution width pixels
     int                     resolution_y;       // Resolution height pixels
-    arb_cursor_state*       mutable_state;      // State with fields possibly consumed by previous handles  
-    const arb_cursor_state* raw_state;          // Untouched state
-    const arb_cursor_state* prev_raw_state;     // Previous frame raw state
-    int                     hovered;            // Whether cursor is inside node and no upper node was
     int                     raw_hovered;        // Whether cursor is inside node
+    int                     hovered;            // Whether cursor is inside node and no upper node was
+    arb_input_state*        mutable;            // State with fields possibly consumed by previous handles
+    const arb_input_state*  original;           // Original, untoched state of input
+    const arb_input_state*  previous;           // Previous frame original state
     float                   delta_time;         // Time in seconds since last frame
-} arb_node_cursor_input;
+} arb_node_input_state;
 
 // ===========================
 // Node Layout
@@ -183,15 +192,15 @@ typedef void(arb_node_transform_func_signature)(
 );
 typedef arb_node_transform_func_signature* arb_node_transform_func;
 
-typedef void(arb_node_cursor_func_signature)(
+typedef void(arb_node_input_func_signature)(
     const void*                     node_data,          // Node data
     void*                           storage_data,       // Storage data
-    arb_node_cursor_input*          node_input,         // Cursor input
+    arb_node_input_state*           node_input,         // Input state
     const arb_node_layout_state*    layout,             // Node layout state for info
     int                             resolution_x,       // Screen resolution x
     int                             resolution_y        // Screen resolution y
 );
-typedef arb_node_cursor_func_signature* arb_node_cursor_func;
+typedef arb_node_input_func_signature* arb_node_input_func;
 
 // ===========================
 // Functions Declarations
@@ -205,8 +214,8 @@ void func_name(const void* node_data, void* storage_data, arb_node_layout_state*
 void func_name(const void* node_data, void* storage_data, arb_mat3x2* transform,const arb_node_layout_state* layout, int resolution_x, int resolution_y)
 
 // Proper way to define cursor funcs; Shortens code, allows changes
-#define ARB_NODE_CURSOR_FUNC_DECL(func_name) \
-void func_name(const void* node_data, void* storage_data, arb_node_cursor_input* node_input, const arb_node_layout_state* layout, int resolution_x, int resolution_y)
+#define ARB_NODE_INPUT_FUNC_DECL(func_name) \
+void func_name(const void* node_data, void* storage_data, arb_node_input_state* node_input, const arb_node_layout_state* layout, int resolution_x, int resolution_y)
 
 // ===========================
 // Node Typedefs
@@ -259,11 +268,11 @@ typedef struct arb_type {
     // OUT: [own and children render transform]
     arb_node_transform_func transform;
 
-    // Cursor Input
+    // Input
 
-    // Funtion solving cursor input
+    // Funtion solving cursor/typewriter input
     // Called every frame after render
-    arb_node_cursor_func    cursor;
+    arb_node_input_func     input;
 } arb_type;
 
 typedef enum arb_flag {
@@ -462,16 +471,16 @@ typedef struct arb_align_data {
 } arb_align_data;
 
 // ===========================
-// Cursor Node Types
+// Input Node Types
 // Those can be used to add input, without writing a new node type
 
-// Cursor handle type
-// Sets callback for children cursor input nodes to own data (shall be arb_node_cursor_func)
-extern const arb_type arb_cursor_handle_type;
+// Input handle type
+// Sets callback for children cursor input nodes to own data (shall be arb_node_input_func)
+extern const arb_type arb_input_handle_type;
 
-// Cursor input type
-// Creates an input box, which will call arb_node_cursor_func provided by parent handle type
-extern const arb_type arb_cursor_call_type;
+// Input input type
+// Creates an input box, which will call arb_node_input_func provided by parent handle type
+extern const arb_type arb_input_call_type;
 
 // ===========================
 // Transform Node Types
@@ -675,7 +684,7 @@ void arb_cache_update(
     const arb_node*     root,
     int                 resolution_x,
     int                 resolution_y,
-    arb_cursor_state    cursor_state,
+    arb_input_state     input_state,
     float               delta_time,
     arb_requests*       out_requests
 );
@@ -786,7 +795,7 @@ static void stable_sort(void* base, size_t nmemb, size_t size, int (*compar)(con
 typedef struct cache_slot cache_slot;
 typedef struct text_cache_slot text_cache_slot;
 typedef struct storage_cache_slot storage_cache_slot;
-typedef struct cursor_input_box cursor_input_box;
+typedef struct input_box input_box;
 
 typedef enum emergency_jump_flag {
     emergency_jump_flag_grow_occured = 1,
@@ -840,12 +849,12 @@ struct arb_cache {
     arb_clipbox_request*    clipbox_requests;
 
     // Cursor input boxes dynamic array
-    size_t                  cursor_input_boxes_capacity;
-    size_t                  cursor_input_boxes_count;
-    cursor_input_box*       cursor_input_boxes;
+    size_t                  input_boxes_capacity;
+    size_t                  input_boxes_count;
+    input_box*              input_boxes;
 
     // Previous frame cursor state
-    arb_cursor_state        previous_frame_cursor_state;
+    arb_input_state         previous_frame_input_state;
 };
 
 arb_cache* arb_create_cache() {
@@ -874,7 +883,7 @@ void arb_free_cache(arb_cache* cache) {
     free(cache->text_alloc_requests);
     free(cache->clipbox_requests);
     free(cache->draw_requests);
-    free(cache->cursor_input_boxes);
+    free(cache->input_boxes);
     free(cache);
 }
 
@@ -1099,18 +1108,18 @@ static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
 }
 
 // ===========================
-// Cursor Input Box
+// Input Box
 
-typedef struct cursor_input_box {
+typedef struct input_box {
     node_stable_index       owner;
-    arb_node_cursor_func    handle;
+    arb_node_input_func    handle;
     cache_slot*             slot;
     const void*             variable;
     storage_cache_slot*     storage;
     int                     clip_index;
     short                   depth_index;
     arb_mat3x2              box_transform;
-} cursor_input_box;
+} input_box;
 
 // ===========================
 // Cache dynamic arrays
@@ -1149,7 +1158,7 @@ DEFINE_DYNAMIC_ARRAY_FUNCS(
 );
 
 DEFINE_DYNAMIC_ARRAY_FUNCS(
-    cursor_input_box, cursor_input_box, cursor_input_boxes, cursor_input_boxes_capacity, cursor_input_boxes_count
+    input_box, input_box, input_boxes, input_boxes_capacity, input_boxes_count
 );
 
 static inline void free_cached_text_alloc_requests(arb_cache* cache) {
@@ -1515,7 +1524,7 @@ typedef struct render_dfs_subtree_state {
     const void*             instance;
     short                   depth_index;
     int                     clipbox_index;
-    arb_node_cursor_func    cursor_handle;
+    arb_node_input_func    cursor_handle;
     arb_node_transform_func    transform_handle;
     storage_cache_slot*     storage_slot;
     void*                   storage_data;
@@ -1637,12 +1646,12 @@ static void render_dfs(
         });
     }
 
-    // Cursor
-    // Request cursor input box
-    if (node->type->cursor) {
-        cursor_input_box_cache_push(cache, (cursor_input_box){
+    // Input
+    // Request input box
+    if (node->type->input) {
+        input_box_cache_push(cache, (input_box){
             .owner          = index,
-            .handle         = node->type->cursor,
+            .handle         = node->type->input,
             .slot           = own,
             .variable       = state->variable,
             .storage        = state->storage_slot,
@@ -1651,8 +1660,8 @@ static void render_dfs(
             .box_transform  = transform
         });
     }
-    if (node->type == &arb_cursor_call_type && state->cursor_handle) {
-        cursor_input_box_cache_push(cache, (cursor_input_box){
+    if (node->type == &arb_input_call_type && state->cursor_handle) {
+        input_box_cache_push(cache, (input_box){
             .owner          = index,
             .handle         = state->cursor_handle,
             .slot           = own,
@@ -1687,8 +1696,8 @@ static void render_dfs(
         new_state.depth_index += ddata->depth_change;
     }
     // Update cursor handle for subtree
-    else if (node->type == &arb_cursor_handle_type) {
-        new_state.cursor_handle = (arb_node_cursor_func)data;
+    else if (node->type == &arb_input_handle_type) {
+        new_state.cursor_handle = (arb_node_input_func)data;
     }
     // Update trnasform handle for subtree
     else if (node->type == &arb_transform_handle_type) {
@@ -1714,9 +1723,9 @@ static inline int helper_draw_requests_greater_depth(const void* av, const void*
 }
 
 // Helper for cursor input boxes depth sorting : deepest first
-static inline int helper_cursor_input_boxes_greater_depth(const void* av, const void* bv) {
-    const cursor_input_box* a = (const cursor_input_box*)av; 
-    const cursor_input_box* b = (const cursor_input_box*)bv;
+static inline int helper_input_boxes_greater_depth(const void* av, const void* bv) {
+    const input_box* a = (const input_box*)av; 
+    const input_box* b = (const input_box*)bv;
     if (a->depth_index > b->depth_index) return -1;
     if (a->depth_index < b->depth_index) return 1;
     return 0;
@@ -1738,7 +1747,7 @@ void arb_cache_update(
     const arb_node*     root,
     int                 resolution_x,
     int                 resolution_y,
-    arb_cursor_state    cursor_state,
+    arb_input_state     input_state,
     float               delta_time,
     arb_requests*       out_requests
 ) {
@@ -1767,7 +1776,7 @@ void arb_cache_update(
     cache->text_free_requests_count     = 0;
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
-    cache->cursor_input_boxes_count     = 0;
+    cache->input_boxes_count     = 0;
 
     // Render pass
     render_dfs_subtree_state default_subtree_state = {
@@ -1779,26 +1788,26 @@ void arb_cache_update(
 
     // Sort render requests and input boxes by depth
     stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(arb_draw_request), helper_draw_requests_greater_depth);
-    stable_sort(cache->cursor_input_boxes,  cache->cursor_input_boxes_count, sizeof(cursor_input_box), helper_cursor_input_boxes_greater_depth);
+    stable_sort(cache->input_boxes,  cache->input_boxes_count, sizeof(input_box), helper_input_boxes_greater_depth);
 
     // Find out normalized cursor position
-    float norm_cursor_x = -1.0f + 2.0f * ((float)cursor_state.position_x / resolution_x);
-    float norm_cursor_y =  1.0f - 2.0f * ((float)cursor_state.position_y / resolution_y);
+    float norm_cursor_x = -1.0f + 2.0f * ((float)input_state.cursor.position_x / resolution_x);
+    float norm_cursor_y =  1.0f - 2.0f * ((float)input_state.cursor.position_y / resolution_y);
 
-    // Do cursor input callbacks, walking from topmost to deepest
-    arb_cursor_state changable_state = cursor_state;
-    arb_node_cursor_input input_data = {
+    // Do input callbacks, walking from topmost to deepest
+    arb_input_state changable_state = input_state;
+    arb_node_input_state input_data = {
         .resolution_x   = cache->resolution_x,
         .resolution_y   = cache->resolution_y,
-        .mutable_state  = &changable_state,
-        .raw_state      = &cursor_state,
-        .prev_raw_state = &cache->previous_frame_cursor_state,
+        .mutable        = &changable_state,
+        .original       = &input_state,
+        .previous       = &cache->previous_frame_input_state,
         .delta_time     = delta_time
     };
     
     int ever_was_inside = 0;
-    if (cache->cursor_input_boxes_count) for (size_t i = cache->cursor_input_boxes_count - 1; ; i--) {
-        cursor_input_box* ibox = &cache->cursor_input_boxes[i];
+    if (cache->input_boxes_count) for (size_t i = cache->input_boxes_count - 1; ; i--) {
+        input_box* ibox = &cache->input_boxes[i];
 
         int cursor_inside  = is_point_in_transformed_box(ibox->box_transform, norm_cursor_x, norm_cursor_y);
         if (ibox->clip_index != -1) {
@@ -1817,8 +1826,8 @@ void arb_cache_update(
         if (i == 0) break; // break loop at last element
     }
 
-    // Current state in now previous cursor state
-    cache->previous_frame_cursor_state = cursor_state;
+    // Current state in now previous input state
+    cache->previous_frame_input_state = input_state;
 
     // Relayout sequence begin
     // Do it after render - then we can trust all nodes have their inserted cache and auxilary slots
@@ -2015,12 +2024,12 @@ const arb_type arb_text_type = (arb_type){0};   // No functions
 // ===========================
 // Cursor handle type
 // This type is specially handled in pass implementation
-const arb_type arb_cursor_handle_type = box_behavior_type;
+const arb_type arb_input_handle_type = box_behavior_type;
 
 // ===========================
 // Cursor input type
 // This type is specially handled in pass implementation
-const arb_type arb_cursor_call_type = box_behavior_type;
+const arb_type arb_input_call_type = box_behavior_type;
 
 // ===========================
 // Transform handle type
@@ -2451,28 +2460,28 @@ typedef struct button_storage {
     arb_box_data current;
 } button_storage;
 
-static ARB_NODE_CURSOR_FUNC_DECL(button_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(button_cursor_func) {
     const arb_button_data*   data   = node_data;
     const arb_button_style*  style  = data->style;
     const arb_button_target* target = data->target;
     button_storage*          stor   = storage_data;
 
-    arb_cursor_state* crr =  node_input->mutable_state;
-    arb_cursor_state  prv = *node_input->prev_raw_state;
+    arb_cursor_state crr = node_input->mutable->cursor;
+    arb_cursor_state prv = node_input->previous->cursor;
 
-    char just_pressed  = crr->left_down  && !prv.left_down;
-    char just_released = !crr->left_down && prv.left_down;
+    char just_pressed  = crr.left_down  && !prv.left_down;
+    char just_released = !crr.left_down && prv.left_down;
 
     if (just_pressed && node_input->hovered) {  // press started
         stor->pressed = 1;
         stor->current = *style->pressed_style;
         if (target->on_clicked) target->on_clicked(target->payload);
-        crr->left_down = 0;
+        crr.left_down = 0;
     }
-    else if (crr->left_down && stor->pressed) {    // held
+    else if (crr.left_down && stor->pressed) {    // held
         stor->current = *style->pressed_style;
         if (target->on_held) target->on_held(target->payload);
-        crr->left_down = 0;
+        crr.left_down = 0;
     }
     else if (just_released && stor->pressed) {   // released
         stor->pressed = 0;
@@ -2486,8 +2495,8 @@ static ARB_NODE_CURSOR_FUNC_DECL(button_cursor_func) {
 
 const arb_node arb_button_structure[] = {
     ARB_NODE(arb_storage_type,       arb_flag_none, sizeof(button_storage)),
-    ARB_NODE(arb_cursor_handle_type, arb_flag_none, button_cursor_func),
-    ARB_NODE(arb_cursor_call_type,   arb_flag_instanced_data, 0),
+    ARB_NODE(arb_input_handle_type, arb_flag_none, button_cursor_func),
+    ARB_NODE(arb_input_call_type,   arb_flag_instanced_data, 0),
     ARB_NODE(arb_box_type, arb_flag_storaged_data | arb_flag_ignore_max_width | arb_flag_ignore_max_height, offsetof(button_storage, current)),
     ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_button_data, child))
 };
@@ -2509,10 +2518,10 @@ typedef struct scrollbox_storage {
 
 static const float scroll_speed_vertical = 2500;
 
-static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_scroll_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->raw_hovered) {
-        float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_vertical;
+        float pixel_change = node_input->mutable->cursor.scroll_delta * node_input->delta_time * scroll_speed_vertical;
         stor->position -= pixel_change;
     }
 }
@@ -2610,7 +2619,7 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_handle_transform_func) {
     *transform = arb_mat3x2_scale(*transform, 1, sy);
 }
 
-static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
     const arb_scrollbox_data*  data  = node_data; 
     const arb_scrollbox_style* style = data->style;
     scrollbox_storage*         stor  = storage_data;
@@ -2622,9 +2631,9 @@ static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
     if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
-    int left_pressed = node_input->mutable_state->left_down;
+    int left_pressed = node_input->mutable->cursor.left_down;
     if (left_pressed) {
-        int cursor_y = node_input->mutable_state->position_y;
+        int cursor_y = node_input->mutable->cursor.position_y;
         if (stor->handle_drag != -1) {                         // Was dragged
             int pixels_change = stor->handle_drag - cursor_y;  // Calculate pixel movement within handle
             float ratio = stor->display_pixels ? (float)stor->content_pixels / stor->display_pixels : 0.0f;
@@ -2634,14 +2643,14 @@ static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
             stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_y;
-            node_input->mutable_state->left_down = 0;   // Consume left click
+            node_input->mutable->cursor.left_down = 0;   // Consume left click
         }
         else if (node_input->hovered) {
-            int c_left_pressed = node_input->mutable_state->left_down;
-            int p_left_pressed = node_input->prev_raw_state->left_down;
+            int c_left_pressed = node_input->mutable->cursor.left_down;
+            int p_left_pressed = node_input->previous->cursor.left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
             stor->handle_drag = cursor_y;
-            node_input->mutable_state->left_down = 0;   // Consume left click
+            node_input->mutable->cursor.left_down = 0;   // Consume left click
         }
     }
     else stor->handle_drag = -1;
@@ -2651,7 +2660,7 @@ static ARB_NODE_CURSOR_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
 static const arb_type vertical_scrollbox_handle_type = {
     ARB_TYPE_OVERLAY_INIT,
     .transform  = vertical_scrollbox_handle_transform_func,
-    .cursor     = vertical_scrollbox_handle_cursor_func
+    .input      = vertical_scrollbox_handle_cursor_func
 };
 
 const arb_node vertical_scrollbox_main_body[] = {
@@ -2688,8 +2697,8 @@ const arb_node arb_vertical_scrollbox_structure[] = {
     // Clipbox
     ARB_NODE(arb_box_type, arb_flag_clipbox | arb_flag_ignore_min_height, &(arb_box_data){.tint = ARB_HEX("#00000000")}),
     // Scroll input
-    ARB_NODE(arb_cursor_handle_type, arb_flag_none, vertical_scrollbox_scroll_cursor_func),
-    ARB_NODE(arb_cursor_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
+    ARB_NODE(arb_input_handle_type, arb_flag_none, vertical_scrollbox_scroll_cursor_func),
+    ARB_NODE(arb_input_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
     // Row - content/handle
     ARB_NODE(arb_row_type, arb_flag_none, &(arb_row_data){
         .spacing        = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
@@ -2705,10 +2714,10 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 
 static const float scroll_speed_horizontal = 3500;
 
-static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_scroll_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_scroll_cursor_func) {
     const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
     if (node_input->raw_hovered) {
-        float pixel_change = node_input->mutable_state->scroll_delta * node_input->delta_time * scroll_speed_horizontal;
+        float pixel_change = node_input->mutable->cursor.scroll_delta * node_input->delta_time * scroll_speed_horizontal;
         stor->position += pixel_change;
     }
 }
@@ -2806,7 +2815,7 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_handle_transform_func) 
     *transform = arb_mat3x2_scale(*transform, sx, 1);
 }
 
-static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
     const arb_scrollbox_data*   data  = node_data; 
     const arb_scrollbox_style*  style = data->style;
     scrollbox_storage*          stor  = storage_data;
@@ -2818,9 +2827,9 @@ static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
     if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
-    int left_pressed = node_input->mutable_state->left_down;
+    int left_pressed = node_input->mutable->cursor.left_down;
     if (left_pressed) {
-        int cursor_x = node_input->mutable_state->position_x;
+        int cursor_x = node_input->mutable->cursor.position_x;
         if (stor->handle_drag != -1) {                         // Was dragged
             int pixels_change = stor->handle_drag - cursor_x;  // Calculate pixel movement within handle
             float ratio = stor->display_pixels ? (float)stor->content_pixels / stor->display_pixels : 0.0f;
@@ -2830,14 +2839,14 @@ static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
             stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_x;
-            node_input->mutable_state->left_down = 0;   // Consume left click
+            node_input->mutable->cursor.left_down = 0;   // Consume left click
         }
         else if (node_input->hovered) {
-            int c_left_pressed = node_input->mutable_state->left_down;
-            int p_left_pressed = node_input->prev_raw_state->left_down;
+            int c_left_pressed = node_input->mutable->cursor.left_down;
+            int p_left_pressed = node_input->previous->cursor.left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
             stor->handle_drag = cursor_x;
-            node_input->mutable_state->left_down = 0;   // Consume left click
+            node_input->mutable->cursor.left_down = 0;   // Consume left click
         }
     }
     else stor->handle_drag = -1;
@@ -2847,7 +2856,7 @@ static ARB_NODE_CURSOR_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
 static const arb_type horizontal_scrollbox_handle_type = {
     ARB_TYPE_OVERLAY_INIT,
     .transform  = horizontal_scrollbox_handle_transform_func,
-    .cursor     = horizontal_scrollbox_handle_cursor_func
+    .input      = horizontal_scrollbox_handle_cursor_func
 };
 
 const arb_node horizontal_scrollbox_main_body[] = {
@@ -2884,8 +2893,8 @@ const arb_node arb_horizontal_scrollbox_structure[] = {
     // Clipbox
     ARB_NODE(arb_box_type, arb_flag_clipbox | arb_flag_ignore_min_width, &(arb_box_data){.tint = ARB_HEX("#00000000")}),
     // Scroll input
-    ARB_NODE(arb_cursor_handle_type, arb_flag_none, horizontal_scrollbox_scroll_cursor_func),
-    ARB_NODE(arb_cursor_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
+    ARB_NODE(arb_input_handle_type, arb_flag_none, horizontal_scrollbox_scroll_cursor_func),
+    ARB_NODE(arb_input_call_type, arb_flag_instanced_data, 0), // Call with scrollbox data
     // Column - content/handle
     ARB_NODE(arb_column_type, arb_flag_none, &(arb_column_data){
         .spacing          = (arb_length){16, ARB_INF_LENGTH, ARB_EPS_FLEX},
@@ -2906,20 +2915,20 @@ typedef struct float_slider_storage {
 } float_slider_storage;
 
 #define FLOAT_SLIDER_SCROLL_SPEED 0.6f  // fraction of (max-min) per second, per unit scroll_delta
-static ARB_NODE_CURSOR_FUNC_DECL(float_slider_cursor_func) {
+static ARB_NODE_INPUT_FUNC_DECL(float_slider_cursor_func) {
     const arb_float_slider_data*   dat = node_data;
     const arb_float_slider_style*  stl = dat->style;
     const arb_float_slider_target* tar = dat->target;
     float_slider_storage*          str = storage_data;
 
-    int pixel_pos = stl->is_vertical ? node_input->mutable_state->position_y : node_input->mutable_state->position_x;
+    int pixel_pos = stl->is_vertical ? node_input->mutable->cursor.position_y : node_input->mutable->cursor.position_x;
 
     // Scroll wheel nudges value while hovered, independent of drag/click state
     if (!stl->is_scroll_disabled && node_input->hovered && dat->target && 
-        tar->max > tar->min && node_input->mutable_state->scroll_delta != 0.0f
+        tar->max > tar->min && node_input->mutable->cursor.scroll_delta != 0.0f
     ) {
         float value_delta = 
-            node_input->mutable_state->scroll_delta * node_input->delta_time
+            node_input->mutable->cursor.scroll_delta * node_input->delta_time
             * FLOAT_SLIDER_SCROLL_SPEED * (tar->max - tar->min);
 
         float new_value = *tar->target + value_delta;
@@ -2927,11 +2936,11 @@ static ARB_NODE_CURSOR_FUNC_DECL(float_slider_cursor_func) {
         if (new_value > tar->max) new_value = tar->max;
         *tar->target = new_value;
 
-        node_input->mutable_state->scroll_delta = 0.0f; // consume, don't leak to nodes underneath
+        node_input->mutable->cursor.scroll_delta = 0.0f; // consume, don't leak to nodes underneath
     }
 
-    int c_left_down = node_input->mutable_state->left_down;
-    int p_left_down = node_input->prev_raw_state->left_down;
+    int c_left_down = node_input->mutable->cursor.left_down;
+    int p_left_down = node_input->previous->cursor.left_down;
 
     if (!c_left_down) {
         str->is_during_drag = 0;
@@ -2944,7 +2953,7 @@ static ARB_NODE_CURSOR_FUNC_DECL(float_slider_cursor_func) {
         str->is_during_drag  = 1;
         str->last_drag_pixel = pixel_pos;
         str->current_style   = *stl->pressed_style;
-        node_input->mutable_state->left_down = 0;
+        node_input->mutable->cursor.left_down = 0;
         return;
     }
 
@@ -2965,7 +2974,7 @@ static ARB_NODE_CURSOR_FUNC_DECL(float_slider_cursor_func) {
     }
 
     str->last_drag_pixel = pixel_pos;
-    node_input->mutable_state->left_down = 0;
+    node_input->mutable->cursor.left_down = 0;
 }
 
 static ARB_NODE_TRANSFORM_FUNC_DECL(float_slider_transform_func) {
@@ -2999,8 +3008,8 @@ const arb_node arb_float_slider_structure[] = {
     // Push storage
     ARB_NODE(arb_storage_type, arb_flag_none, sizeof(float_slider_storage)),
     // Input field taking entire slider space (possibly bigger than the value box)
-    ARB_NODE(arb_cursor_handle_type, arb_flag_none, float_slider_cursor_func),
-    ARB_NODE(arb_cursor_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 0),
+    ARB_NODE(arb_input_handle_type, arb_flag_none, float_slider_cursor_func),
+    ARB_NODE(arb_input_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 0),
     // Transform slider according to percent
     ARB_NODE(arb_transform_handle_type, arb_flag_none, float_slider_transform_func),
     ARB_NODE(arb_transform_call_type, arb_flag_instanced_data, 0),
