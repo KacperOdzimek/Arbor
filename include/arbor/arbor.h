@@ -354,8 +354,8 @@ typedef enum arb_invalidation_flag {
     arb_invalidation_flag_all               = 63,
 } arb_invalidation_flag;
 typedef struct arb_invalidation_data {
-    arb_invalidation_flag* flag_always_ptr;         // null-able
-    arb_invalidation_flag* flag_consumable_ptr;     // null-able
+    const arb_invalidation_flag*    flag_always_ptr;        // null-able
+    arb_invalidation_flag*          flag_consumable_ptr;    // null-able
 } arb_invalidation_data;
 
 // Indirect type
@@ -555,6 +555,21 @@ typedef struct arb_float_slider_data {
     const arb_float_slider_target*  target;             // Slider Target; Must not be NULL
     const arb_node*                 child;              // Slider Child
 } arb_float_slider_data;
+
+// Instance this with arb_fixed_text_box_data for customizable, text box with fixed length limit
+// This scrollbox will attempt filling entire given space (flex = 1, max = inf)
+extern const arb_node arb_fixed_text_box_structure[];
+typedef struct arb_fixed_text_box_style {
+    const arb_text_style*           style;
+} arb_fixed_text_box_style;
+typedef struct arb_fixed_text_box_target {
+    uint32_t                        bytes;              // Text block bytes constrain
+    char*                           text;               // Text input target, displayed and edited. Must be 0-terminated at creation
+} arb_fixed_text_box_target;
+typedef struct arb_fixed_text_box_data {
+    const arb_fixed_text_box_style* style;
+    const arb_fixed_text_box_target*target;
+} arb_fixed_text_box_data;
 
 // ===========================
 // Node Shortcuts
@@ -1112,7 +1127,7 @@ static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
 
 typedef struct input_box {
     node_stable_index       owner;
-    arb_node_input_func    handle;
+    arb_node_input_func     handle;
     cache_slot*             slot;
     const void*             variable;
     storage_cache_slot*     storage;
@@ -1194,6 +1209,7 @@ static void create_text_request(arb_cache* cache, text_cache_slot* slot, const a
     }
     else {
         slot->text_width = 0; slot->text_height = 0;
+        slot->allocation = NULL; // Free is pushed, there will be no overwrite by allocation
     }
 }
 
@@ -1632,7 +1648,7 @@ static void render_dfs(
     else if (node->type == &arb_text_type) {
         const arb_text_data* tdata = data;
         text_cache_slot* text_cache = text_cache_hashmap_get(cache, index);
-        draw_request_cache_push(cache, (arb_draw_request){
+        if (tdata->style) draw_request_cache_push(cache, (arb_draw_request){
             .transform          = transform,
             .clip_index         = state->clipbox_index,
             .depth_index        = state->depth_index,
@@ -2991,14 +3007,14 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(float_slider_transform_func) {
 
     if (stl->is_vertical) {
         // Anchor at bottom edge, fill upward with value
-        float extent      = (float)layout->given_height;
-        float offset_px    = (percent - 1.0f) * extent * 0.5f;
+        float extent    = (float)layout->given_height;
+        float offset_px = (percent - 1.0f) * extent * 0.5f;
         *transform = arb_mat3x2_scale (*transform, 1.0f, percent);
         *transform = arb_mat3x2_offset(*transform, 0.0f, 2.0f * offset_px / (float)resolution_y);
     } else {
         // Anchor at left edge, fill rightward with value
-        float extent      = (float)layout->given_width;
-        float offset_px    = (percent - 1.0f) * extent * 0.5f;
+        float extent    = (float)layout->given_width;
+        float offset_px = (percent - 1.0f) * extent * 0.5f;
         *transform = arb_mat3x2_scale (*transform, percent, 1.0f);
         *transform = arb_mat3x2_offset(*transform, 2.0f * offset_px / (float)resolution_x, 0.0f);
     }
@@ -3021,6 +3037,102 @@ const arb_node arb_float_slider_structure[] = {
     ),
     // Jump to child
     ARB_NODE(arb_indirect_type, arb_flag_instanced_data | arb_flag_indirected_data, offsetof(arb_float_slider_data, child))
+};
+
+// ===========================
+// Fixed Text Box
+
+typedef struct fixed_text_box_storage {
+    int                     focused;
+    size_t                  cursor_pos;
+    arb_text_data           text_data;
+    arb_invalidation_data   invalidation;
+    arb_invalidation_flag   consumable_flag;
+} fixed_text_box_storage;
+
+const arb_invalidation_flag fixed_text_box_invalidation_always_flag = arb_invalidation_flag_width_measure;
+
+static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
+    const arb_fixed_text_box_data*   dat = node_data;
+    const arb_fixed_text_box_style*  stl = dat->style;
+    const arb_fixed_text_box_target* tar = dat->target;
+    fixed_text_box_storage*          str = storage_data;
+
+    arb_cursor_state crr = node_input->mutable->cursor;
+    arb_cursor_state prv = node_input->previous->cursor;
+
+    // Configure read pointers
+    str->text_data.style = stl->style;
+    str->text_data.text  = tar->text;
+    str->invalidation.flag_consumable_ptr = &str->consumable_flag;
+    str->invalidation.flag_always_ptr = &fixed_text_box_invalidation_always_flag;
+
+    // Detect mouse click to focus
+    if (crr.left_down && !prv.left_down) {
+        str->focused = node_input->hovered;
+    }
+    if (!str->focused) return;
+
+    // Ensure cursor_pos stays within valid string bounds
+    size_t text_len = strlen(tar->text);
+    if (str->cursor_pos > text_len) {
+        str->cursor_pos = text_len;
+    }
+    
+    // Make changes in text
+    char* input = (char*)node_input->mutable->typewriter.utf8_input;
+    if (!input || !*input || tar->bytes == 0) return;
+    str->consumable_flag = arb_invalidation_flag_text;  // Invalidate text on input
+    while (*input) {
+        if (*input == '\b') {
+            if (str->cursor_pos > 0) {
+                size_t prev_pos = str->cursor_pos;
+                do {
+                    str->cursor_pos--;
+                } while (str->cursor_pos > 0 && ((unsigned char)tar->text[str->cursor_pos] & 0xC0) == 0x80);
+
+                size_t deleted_bytes = prev_pos - str->cursor_pos;
+                size_t tail_len = text_len - prev_pos;
+                
+                memmove(tar->text + str->cursor_pos, tar->text + prev_pos, tail_len + 1);
+                text_len -= deleted_bytes;
+            }
+            input++;
+            continue;
+        }
+
+        // Standard text insertion at cursor_pos
+        const char* temp_ptr = input;
+        decode_utf8(&temp_ptr); // Advance pointer over current UTF-8 sequence
+        size_t char_bytes = (size_t)(temp_ptr - input);
+
+        size_t available = tar->bytes - text_len - 1;
+        if (char_bytes <= available) {
+            size_t tail_len = text_len - str->cursor_pos;
+            
+            memmove(tar->text + str->cursor_pos + char_bytes, tar->text + str->cursor_pos, tail_len + 1);
+            memcpy(tar->text + str->cursor_pos, input, char_bytes);
+            
+            str->cursor_pos += char_bytes;
+            text_len += char_bytes;
+        }
+        input = (char*)temp_ptr;
+    }
+
+    node_input->mutable->typewriter.utf8_input = NULL;
+}
+
+const arb_node arb_fixed_text_box_structure[] = {
+    // Push storage
+    ARB_NODE(arb_storage_type, arb_flag_none, sizeof(fixed_text_box_storage)),
+    // Invalidation
+    ARB_NODE(arb_invalidation_type, arb_flag_storaged_data, offsetof(fixed_text_box_storage, invalidation)),
+    // Focus button
+    ARB_NODE(arb_input_handle_type, arb_flag_none, fixed_text_box_input_func),
+    ARB_NODE(arb_input_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 0),
+    // Text input
+    ARB_NODE(arb_text_type, arb_flag_storaged_data, offsetof(fixed_text_box_storage, text_data)),
+    ARB_LAST
 };
 
 #endif // ARBOR_IMPL

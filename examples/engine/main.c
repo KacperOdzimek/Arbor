@@ -218,6 +218,10 @@ static arb_cache*  ui_cache;
 static float       g_scroll_delta_x = 0.0f;
 static float       g_scroll_delta_y = 0.0f;
 
+// Typed input state buffers
+static char        g_typed_utf8[256] = {0};
+static size_t      g_typed_utf8_len = 0;
+
 // Last window size limits we pushed to GLFW (as reported by Arbor, in framebuffer pixels).
 // Used so we only call into GLFW when the UI's requirements actually change.
 static uint32_t    g_applied_min_x = UINT32_MAX, g_applied_min_y = UINT32_MAX;
@@ -250,6 +254,8 @@ static glyph_allocator    g_glyph_alloc;
 // Window / GL context
 static void     create_window_load_opengl();
 static void     scroll_callback(GLFWwindow* w, double xoffset, double yoffset);
+static void     char_callback(GLFWwindow* w, unsigned int codepoint);
+static void     key_callback(GLFWwindow* w, int key, int scancode, int action, int mods);
 static void     apply_window_size_limits(const arb_requests* access);
 
 // Rendering itself / API
@@ -293,6 +299,55 @@ static void scroll_callback(GLFWwindow* w, double xoffset, double yoffset) {
     g_scroll_delta_y += (float)yoffset;
 }
 
+static void char_callback(GLFWwindow* w, unsigned int codepoint) {
+    (void)w;
+    char temp[5];
+    int len = 0;
+    if (codepoint < 0x80) {
+        temp[0] = (char)codepoint;
+        len = 1;
+    } else if (codepoint < 0x800) {
+        temp[0] = (char)(0xC0 | (codepoint >> 6));
+        temp[1] = (char)(0x80 | (codepoint & 0x3F));
+        len = 2;
+    } else if (codepoint < 0x10000) {
+        temp[0] = (char)(0xE0 | (codepoint >> 12));
+        temp[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        temp[2] = (char)(0x80 | (codepoint & 0x3F));
+        len = 3;
+    } else {
+        temp[0] = (char)(0xF0 | (codepoint >> 18));
+        temp[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+        temp[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        temp[3] = (char)(0x80 | (codepoint & 0x3F));
+        len = 4;
+    }
+    temp[len] = '\0';
+
+    if (g_typed_utf8_len + len < sizeof(g_typed_utf8) - 1) {
+        memcpy(g_typed_utf8 + g_typed_utf8_len, temp, len);
+        g_typed_utf8_len += len;
+        g_typed_utf8[g_typed_utf8_len] = '\0';
+    }
+}
+
+static void key_callback(GLFWwindow* w, int key, int scancode, int action, int mods) {
+    (void)w; (void)scancode; (void)mods;
+    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+        if (key == GLFW_KEY_BACKSPACE) {
+            if (g_typed_utf8_len + 1 < sizeof(g_typed_utf8) - 1) {
+                g_typed_utf8[g_typed_utf8_len++] = '\b';
+                g_typed_utf8[g_typed_utf8_len] = '\0';
+            }
+        } else if (key == GLFW_KEY_ENTER) {
+            if (g_typed_utf8_len + 1 < sizeof(g_typed_utf8) - 1) {
+                g_typed_utf8[g_typed_utf8_len++] = '\n';
+                g_typed_utf8[g_typed_utf8_len] = '\0';
+            }
+        }
+    }
+}
+
 static void create_window_load_opengl() {
     if (!glfwInit()) return;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, ENGINE_GL_VERSION_MAJOR);
@@ -308,6 +363,8 @@ static void create_window_load_opengl() {
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetCharCallback(window, char_callback);
+    glfwSetKeyCallback(window, key_callback);
 }
 
 // Arbor reports its layout constraints in framebuffer pixels, while GLFW's size
@@ -403,12 +460,10 @@ static void frame_main() {
     };
     arb_input_state input_state = {
         .cursor     = cursor_state,
-        .typewriter = {}
+        .typewriter = {
+            .utf8_input = g_typed_utf8
+        }
     };
-
-    // Reset scroll deltas
-    g_scroll_delta_x = 0.0f;
-    g_scroll_delta_y = 0.0f;
 
     // Here we update our UI geometry
     // Returned access contains pointers to render lists
@@ -424,6 +479,14 @@ static void frame_main() {
 
     // Present new rendered frame to user
     glfwSwapBuffers(window);
+
+    // Reset scroll deltas
+    g_scroll_delta_x = 0.0f;
+    g_scroll_delta_y = 0.0f;
+
+    // Reset typed input buffer for the next frame
+    g_typed_utf8[0] = '\0';
+    g_typed_utf8_len = 0;
 }
 
 static void term_main() {
@@ -537,6 +600,12 @@ static GLuint load_shaders(const char* vertex_path, const char* fragment_path) {
 // 7. Rendering Itself
 
 static void draw_frame(arb_requests access, int width, int height) {
+    printf("Free: ");
+    for (size_t i = 0; i < access.text_free_count; i++) printf("%p ", access.text_free_requests[i].text_pointer);
+    printf("\tAlloc: ");
+    for (size_t i = 0; i < access.text_alloc_count; i++) printf("%p ", *access.text_alloc_requests[i].text_pointer_out);
+    printf("\n");
+    
     // Process text frees
     for (size_t i = 0; i < access.text_free_count; i++) {
         text_allocation* alloc = (text_allocation*)access.text_free_requests[i].text_pointer;
@@ -577,7 +646,7 @@ static void draw_frame(arb_requests access, int width, int height) {
     for (size_t i = 0; i < access.draws_count; i++) {
         if (!access.draws_requests[i].is_box_not_text) {
             text_allocation* alloc = (text_allocation*)(*access.draws_requests[i].text.pointer);
-            if (alloc) max_instances += alloc->count;
+            if (alloc && alloc->count > 0 && alloc->count < g_glyph_alloc.capacity) max_instances += alloc->count;
         }
     }
 
@@ -634,7 +703,7 @@ static void draw_frame(arb_requests access, int width, int height) {
             draw_items[i].atlas_position = (uv_2d){0, 0, 1, 1};
 
             text_allocation* alloc = (text_allocation*)(*req->text.pointer);
-            if (alloc) {
+            if (alloc && alloc->count > 0 && alloc->count < g_glyph_alloc.capacity && (alloc->offset + alloc->count) <= g_glyph_alloc.capacity) {
                 // Loop over our partition instead of injecting into a master glyph array
                 for (size_t g = 0; g < alloc->count; g++) {
                     instances[total_instances++] = (gpu_instance){ .item = (int)i, .glyph = (int)(alloc->offset + g) };
@@ -1116,6 +1185,11 @@ static void free_glyphs(size_t offset, size_t count) {
         }
     }
     g_glyph_alloc.free_block_count = w + 1;
+
+    // If everything has been freed, ensure we reset cleanly back to a single full block starting at 0
+    if (g_glyph_alloc.free_block_count == 1 && g_glyph_alloc.free_blocks[0].size == g_glyph_alloc.capacity) {
+        g_glyph_alloc.free_blocks[0].offset = 0;
+    }
 }
 
 static size_t alloc_glyphs(size_t count, const gpu_glyph* data) {
