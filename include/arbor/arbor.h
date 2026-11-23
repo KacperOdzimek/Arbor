@@ -2585,7 +2585,7 @@ static ARB_NODE_LAYOUT_FUNC_DECL(vertical_scrollbox_position) {
     // Probe height
     scrollbox_storage* stor = storage_data;
     stor->display_pixels = node_state->given_height;
-    stor->content_pixels = node_state->measured_height.max;
+    stor->content_pixels = children_count ? children_states[0]->given_height : 0;
 }
 
 // Special type to offset content and probe height given and measured
@@ -2781,7 +2781,7 @@ static ARB_NODE_LAYOUT_FUNC_DECL(horizontal_scrollbox_position) {
     // Probe width
     scrollbox_storage* stor = storage_data;
     stor->display_pixels = node_state->given_width;
-    stor->content_pixels = node_state->measured_width.max;
+    stor->content_pixels = children_count ? children_states[0]->given_width : 0;
 }
 
 // Special type to offset content and probe width given and measured
@@ -3062,6 +3062,9 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     arb_cursor_state prv = node_input->previous->cursor;
 
     // Configure read pointers
+    if (str->invalidation.flag_consumable_ptr != &str->consumable_flag) {
+        str->consumable_flag = arb_invalidation_flag_text;
+    }
     str->text_data.style = stl->style;
     str->text_data.text  = tar->text;
     str->invalidation.flag_consumable_ptr = &str->consumable_flag;
@@ -3129,7 +3132,8 @@ const arb_node arb_fixed_text_box_structure[] = {
     ARB_NODE(arb_invalidation_type, arb_flag_storaged_data, offsetof(fixed_text_box_storage, invalidation)),
     // Focus button
     ARB_NODE(arb_input_handle_type, arb_flag_none, fixed_text_box_input_func),
-    ARB_NODE(arb_input_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height | arb_flag_instanced_data, 0),
+    ARB_NODE(arb_input_call_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height |  arb_flag_instanced_data, 0),
+    ARB_NODE(arb_align_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &(arb_align_data){ .horizontal_align = 0, .vertical_align = 0 }),
     // Text input
     ARB_NODE(arb_text_type, arb_flag_storaged_data, offsetof(fixed_text_box_storage, text_data)),
     ARB_LAST
