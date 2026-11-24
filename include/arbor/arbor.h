@@ -565,15 +565,16 @@ typedef struct arb_float_slider_data {
 // This scrollbox will attempt filling entire given space (flex = 1, max = inf)
 extern const arb_node arb_fixed_text_box_structure[];
 typedef struct arb_fixed_text_box_style {
-    const arb_text_style*           style;
+    const arb_text_style*           style;  // Text box style
 } arb_fixed_text_box_style;
 typedef struct arb_fixed_text_box_target {
-    uint32_t                        bytes;              // Text block bytes constrain
-    char*                           text;               // Text input target, displayed and edited. Must be 0-terminated at creation
+    uint32_t                        bytes;  // Text block bytes constrain
+    char*                           text;   // Text input target, displayed and edited. Must be 0-terminated at creation
 } arb_fixed_text_box_target;
 typedef struct arb_fixed_text_box_data {
-    const arb_fixed_text_box_style* style;
-    const arb_fixed_text_box_target*target;
+    const arb_fixed_text_box_style* style;  // Style pointer; Must not be NULL
+    const arb_fixed_text_box_target*target; // Textbox target
+    arb_invalidation_flag*          invalid;// Client consumable invalidation flag; Can be used to request text rebuild, eg. after style change
 } arb_fixed_text_box_data;
 
 // ===========================
@@ -3078,6 +3079,12 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     str->caret_data.carets = &str->cursor_pos;
     str->invalidation.flag_consumable_ptr = &str->consumable_flag;
     str->invalidation.flag_always_ptr = &fixed_text_box_invalidation_always_flag;
+
+    // OR-other invalidation flags
+    if (dat->invalid) {
+        *str->invalidation.flag_consumable_ptr |= *dat->invalid;
+        *dat->invalid = arb_invalidation_flag_none;
+    }
 
     // Detect mouse click to focus
     if (crr.left_down && !prv.left_down) {
