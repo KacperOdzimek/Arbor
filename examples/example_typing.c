@@ -48,7 +48,7 @@ static const arb_scrollbox_style scrollbox_style = {
 
 arb_node typing_box[] = {
     ARB_NODE(arb_box_type, arb_flag_none, &border_style),
-    ARB_PADD(2),
+    ARB_PADD(8),
     ARB_INST(&(arb_fixed_text_box_data){
         .style = &(arb_fixed_text_box_style){
             .style = &text_style
@@ -71,6 +71,7 @@ arb_node hori_scroll[] = {
 
 arb_node main_structure[] = {
     ARB_NODE(arb_box_type, arb_flag_ignore_max_width | arb_flag_ignore_max_height, &background_style),
+    ARB_PADD(16),
     ARB_INST(&(arb_scrollbox_data){
         .child = hori_scroll,
         .style = &scrollbox_style

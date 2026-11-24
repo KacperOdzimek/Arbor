@@ -771,25 +771,28 @@ static void draw_frame(arb_requests access, int width, int height) {
 // 8. Text Generation
 
 void arb_injection_text_layout(
-    const arb_text_data* text_data,
-    int width_constrain,
-    size_t* out_count,
-    void** out_glyphs,
-    int* out_width,
-    int* out_height
+    const arb_text_data*    text_data,
+    int                     width_constrain,
+    size_t*                 out_count,
+    void**                  out_glyphs,
+    int*                    out_width,
+    int*                    out_height
 ) {
     const char* text = (const char*)text_data->text;
-
-    if (!text || text[0] == '\0') {
-        *out_count  = 0; *out_glyphs = NULL;
-        *out_width  = 0; *out_height = 0;
+    size_t          caret_count = text_data->carets ? text_data->carets->count  : 0;
+    const size_t*   caret_array = text_data->carets ? text_data->carets->carets : NULL; 
+    if (!caret_array) caret_count = 0;
+    
+    if (!text) {
+        *out_count = 0; *out_glyphs = NULL;
+        *out_width = 0; *out_height = 0;
         return;
     }
 
     dynamic_font_atlas* font = get_or_load_font(text_data->style->font);
     if (!font) {
-        *out_count  = 0; *out_glyphs = NULL;
-        *out_width  = 0; *out_height = 0;
+        *out_count = 0; *out_glyphs = NULL;
+        *out_width = 0; *out_height = 0;
         return;
     }
 
@@ -804,7 +807,9 @@ void arb_injection_text_layout(
         }
     }
 
-    gpu_glyph* glyphs = glyph_count ? (gpu_glyph*)malloc(sizeof(gpu_glyph) * glyph_count) : NULL;
+    gpu_glyph* glyphs = (gpu_glyph*)malloc(
+        sizeof(gpu_glyph) * (glyph_count + caret_count)
+    );
 
     const float font_scale = stbtt_ScaleForPixelHeight(&font->font_info, (float)text_data->style->size);
 
@@ -816,24 +821,41 @@ void arb_injection_text_layout(
     const float line_gap    = unscaled_line_gap * font_scale;
     const float line_height = ascent - descent + line_gap;
 
-    float  pen_x      = 0.0f;
-    float  pen_y      = 0.0f;
-    float  text_width = 0.0f;
-    size_t glyph_idx  = 0;
-    uint32_t prev_cp  = 0;
-
     const float atlas_base_size = font->font_size_pixels;
     const float atlas_scale = (float)text_data->style->size / atlas_base_size;
+
+    float  pen_x       = 0.0f;
+    float  pen_y       = 0.0f;
+    float  text_width  = 0.0f;
+    size_t glyph_idx   = 0;
+    uint32_t prev_cp   = 0;
+    uint32_t text_idx  = 0;
+    uint32_t caret_idx = 0;
+
+    dynamic_glyph_info* caret_info = get_or_bake_glyph(font, '|');
 
     const char* ptr = text;
     while (*ptr != '\0') {
         uint32_t cp = decode_utf8(&ptr);
+
+        while (caret_idx < caret_count && caret_array[caret_idx] == text_idx) {
+            caret_idx++;
+            if (!caret_info)  continue;
+            glyphs[glyph_idx++] = (gpu_glyph){
+                .atlas_position = { caret_info->uv_min_x, caret_info->uv_min_y, caret_info->uv_max_x, caret_info->uv_max_y },
+                .off_x          = pen_x + (caret_info->off_x * atlas_scale),
+                .off_y          = (extra_lines_count * line_height + pen_y) - (caret_info->off_y * atlas_scale),
+                .size_x         = caret_info->size_x * atlas_scale,
+                .size_y         = caret_info->size_y * atlas_scale,
+            };
+        }
 
         if (cp == '\n') {
             if (pen_x > text_width) text_width = pen_x;
             pen_x   = 0.0f;
             pen_y  -= line_height;
             prev_cp = 0;
+            text_idx++;
             continue;
         }
 
@@ -843,7 +865,7 @@ void arb_injection_text_layout(
 
         dynamic_glyph_info* info = get_or_bake_glyph(font, cp);
 
-        if (glyph_idx < glyph_count && info) {
+        if (info) {
             glyphs[glyph_idx++] = (gpu_glyph){
                 .atlas_position = { info->uv_min_x, info->uv_min_y, info->uv_max_x, info->uv_max_y },
                 .off_x          = pen_x + (info->off_x * atlas_scale),
@@ -855,14 +877,28 @@ void arb_injection_text_layout(
 
         pen_x  += info ? (info->advance * atlas_scale) : (10.0f * atlas_scale);
         prev_cp = cp;
+        text_idx++;
     }
+
+    while (caret_idx < caret_count) {
+        caret_idx++;
+        if (!caret_info) continue;
+        glyphs[glyph_idx++] = (gpu_glyph){
+            .atlas_position = { caret_info->uv_min_x, caret_info->uv_min_y, caret_info->uv_max_x, caret_info->uv_max_y },
+            .off_x          = pen_x + (caret_info->off_x * atlas_scale),
+            .off_y          = (extra_lines_count * line_height + pen_y) - (caret_info->off_y * atlas_scale),
+            .size_x         = caret_info->size_x * atlas_scale,
+            .size_y         = caret_info->size_y * atlas_scale,
+        };
+    }
+    if (caret_count && text_width < 2) text_width  = 2;
 
     if (pen_x > text_width) text_width = pen_x;
     float text_height = -pen_y + ascent;
 
     *out_width  = (int)text_width;
     *out_height = (int)text_height;
-    *out_count  = glyph_count;
+    *out_count  = glyph_idx;
     *out_glyphs = glyphs;
 }
 

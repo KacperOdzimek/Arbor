@@ -26,8 +26,8 @@ Usage: See dedicated documentation
 
 typedef struct arb_text_data arb_text_data;
 void arb_injection_text_layout(
-    const arb_text_data*    text_data,          // Text data to layout
-    int                     width_constrain,    // Given width, 0 == unlimited width
+    const arb_text_data*    text_data,          // Laid text pointer and style
+    int                     width_constrain,    // Given text block width, 0 == unlimited width
     size_t*                 out_count,          // Out count of glyphs
     void**                  out_glyphs,         // Glyphs malloc'ated array, shall be NULL if count == 0
     int*                    out_width,          // Out pixel width of text box
@@ -400,7 +400,12 @@ typedef struct arb_text_style {
     arb_color       tint;       // Text color modyficator
     uint32_t        shader;     // Shader effect index
 } arb_text_style;
+typedef struct arb_text_caret {
+    size_t          count;      // Carets count
+    const size_t*   carets;     // Carets positions (0 = before 0th characters); Sorted
+} arb_text_caret;
 typedef struct arb_text_data {
+    const arb_text_caret*   carets; // Text carets; Null-able
     const arb_text_style*   style;  // Text style; Must not be NULL
     const char*             text;   // Text pointer
 } arb_text_data;
@@ -3045,6 +3050,7 @@ const arb_node arb_float_slider_structure[] = {
 typedef struct fixed_text_box_storage {
     int                     focused;
     size_t                  cursor_pos;
+    arb_text_caret          caret_data;
     arb_text_data           text_data;
     arb_invalidation_data   invalidation;
     arb_invalidation_flag   consumable_flag;
@@ -3065,8 +3071,11 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     if (str->invalidation.flag_consumable_ptr != &str->consumable_flag) {
         str->consumable_flag = arb_invalidation_flag_text;
     }
-    str->text_data.style = stl->style;
-    str->text_data.text  = tar->text;
+    str->text_data.style   = stl->style;
+    str->text_data.text    = tar->text;
+    str->text_data.carets  = &str->caret_data;
+    str->caret_data.count  = 1;
+    str->caret_data.carets = &str->cursor_pos;
     str->invalidation.flag_consumable_ptr = &str->consumable_flag;
     str->invalidation.flag_always_ptr = &fixed_text_box_invalidation_always_flag;
 
