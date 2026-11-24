@@ -139,12 +139,12 @@ typedef struct arb_cursor_state {
 } arb_cursor_state;
 
 typedef struct arb_typewriter_state {
-    const char*             utf8_input;
+    const char*             utf8_input;         // NULL-terminated utf8 sequence - flattened text input
 } arb_typewriter_state;
 
 typedef struct arb_input_state {
-    arb_cursor_state        cursor;
-    arb_typewriter_state    typewriter;
+    arb_cursor_state        cursor;             // Cursor input
+    arb_typewriter_state    typewriter;         // Typewriter input
 } arb_input_state;
 
 typedef struct arb_node_input_state {
@@ -3075,7 +3075,7 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     str->text_data.style   = stl->style;
     str->text_data.text    = tar->text;
     str->text_data.carets  = &str->caret_data;
-    str->caret_data.count  = 1;
+    str->caret_data.count  = 0;
     str->caret_data.carets = &str->cursor_pos;
     str->invalidation.flag_consumable_ptr = &str->consumable_flag;
     str->invalidation.flag_always_ptr = &fixed_text_box_invalidation_always_flag;
@@ -3090,6 +3090,7 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     if (crr.left_down && !prv.left_down) {
         str->focused = node_input->hovered;
     }
+    str->caret_data.count = str->focused ? 1 : 0;
     if (!str->focused) return;
 
     // Ensure cursor_pos stays within valid string bounds
