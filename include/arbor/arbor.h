@@ -1801,7 +1801,7 @@ void arb_cache_update(
     cache->text_free_requests_count     = 0;
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
-    cache->input_boxes_count     = 0;
+    cache->input_boxes_count            = 0;
 
     // Render pass
     render_dfs_subtree_state default_subtree_state = {
@@ -1835,8 +1835,11 @@ void arb_cache_update(
         input_box* ibox = &cache->input_boxes[i];
 
         int cursor_inside  = is_point_in_transformed_box(ibox->box_transform, norm_cursor_x, norm_cursor_y);
-        if (ibox->clip_index != -1) {
-            cursor_inside &= is_point_in_transformed_box(cache->clipbox_requests[ibox->clip_index].transform, norm_cursor_x, norm_cursor_y);
+        int clipbox_index = ibox->clip_index; while (clipbox_index != -1) {
+            arb_clipbox_request req = cache->clipbox_requests[clipbox_index];
+            cursor_inside &= is_point_in_transformed_box(req.transform, norm_cursor_x, norm_cursor_y);
+            if (!cursor_inside) break;
+            clipbox_index = req.parent;
         }
 
         input_data.hovered     = cursor_inside && !ever_was_inside;
