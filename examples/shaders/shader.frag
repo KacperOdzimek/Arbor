@@ -11,9 +11,15 @@ layout(location = 7) flat in vec2  in_half_size_px;
 
 layout(location = 0) out vec4 outColor;
 
+#define MAX_NESTED_CLIPBOX 256
+struct clipbox_req {
+    mat3x2  transform;
+    int     parent;
+};
+
 // Direct SSBO binding for clipboxes
 layout(std430, binding = 3) readonly buffer ClipboxesBuffer {
-    mat3x2 clipboxes[];
+    clipbox_req clipboxes[];
 };
 
 layout(binding = 0) uniform sampler2D tex_samplers[16];
@@ -59,9 +65,13 @@ vec3 srgb_to_linear(vec3 c) {
 }
 
 void main() {
-    if (in_clipbox_index >= 0) {
-        mat3 clip = expand_affine(clipboxes[in_clipbox_index]);
+    int clip_index = in_clipbox_index;
+    int counter = MAX_NESTED_CLIPBOX;
+    while (clip_index >= 0 && counter >= 0) {
+        mat3 clip = expand_affine(clipboxes[clip_index].transform);
         if (!point_in_clip(clip, in_pos)) discard;
+        clip_index = clipboxes[clip_index].parent;
+        counter--;
     }
 
     float rounding_alpha = 1.0;

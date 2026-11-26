@@ -636,6 +636,7 @@ typedef struct arb_text_alloc_request {
 
 typedef struct arb_clipbox_request {
     arb_mat3x2  transform;          // Clipbox transform
+    int         parent;             // Parent clipbox; -1 if none
 } arb_clipbox_request;
 
 typedef struct arb_draw_request {
@@ -1728,7 +1729,9 @@ static void render_dfs(
 
     // Clipbox flag
     if (node->flags & arb_flag_clipbox) {
-        new_state.clipbox_index = clipbox_request_cache_push(cache, (arb_clipbox_request){.transform = transform});
+        new_state.clipbox_index = clipbox_request_cache_push(cache, (arb_clipbox_request){
+            .transform = transform, .parent = state->clipbox_index
+        });
     }
 
     // Default recursion without state changes

@@ -125,6 +125,7 @@ typedef struct gpu_draw_item {
 // Clipboxes buffer element
 typedef struct gpu_clipbox {
     arb_mat3x2 transform;           // Clipbox transform
+    int        parent;              // Parent clipbox; -1 if none
 } gpu_clipbox;
 
 // Single glyph of text, offset in pixels, so a change of window resolution
@@ -657,6 +658,7 @@ static void draw_frame(arb_requests access, int width, int height) {
 
     for (size_t i = 0; i < access.clipboxes_count; i++) {
         clipboxes[i].transform = access.clipboxes_requests[i].transform;
+        clipboxes[i].parent    = access.clipboxes_requests[i].parent;
     }
 
     for (size_t i = 0; i < access.draws_count; i++) {
