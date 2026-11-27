@@ -147,17 +147,6 @@ typedef struct arb_input_state {
     arb_typewriter_state    typewriter;         // Typewriter input
 } arb_input_state;
 
-typedef struct arb_node_input_state {
-    int                     resolution_x;       // Resolution width pixels
-    int                     resolution_y;       // Resolution height pixels
-    int                     raw_hovered;        // Whether cursor is inside node
-    int                     hovered;            // Whether cursor is inside node and no upper node was
-    arb_input_state*        mutable;            // State with fields possibly consumed by previous handles
-    const arb_input_state*  original;           // Original, untoched state of input
-    const arb_input_state*  previous;           // Previous frame original state
-    float                   delta_time;         // Time in seconds since last frame
-} arb_node_input_state;
-
 // ===========================
 // Node Layout
 
@@ -173,49 +162,46 @@ typedef struct arb_node_layout_state {
 // ===========================
 // Functions Typedefs
 
-typedef void(arb_node_layout_func_signature)(
-    const void*                     node_data,          // Node data
-    void*                           storage_data,       // Storage data
-    arb_node_layout_state*          node_state,         // Node own state
-    size_t                          children_count,     // Node children count
-    arb_node_layout_state**         children_states     // Node children states
-);
+typedef struct arb_node_update_func_arguments {
+    const void*                     node_data;          // Node data
+    void*                           storage_data;       // Storage data
+    int                             resolution_x;       // Resolution width pixels
+    int                             resolution_y;       // Resolution height pixels
+    float                           delta_time;         // Time in seconds since last frame
+    const arb_node_layout_state*    node_state;         // Node layout state for info
+    int                             raw_hovered;        // Whether cursor is inside node
+    int                             hovered;            // Whether cursor is inside node and no upper node was
+    arb_input_state*                mutable;            // State with fields possibly consumed by previous handles
+    const arb_input_state*          original;           // Original, untoched state of input
+    const arb_input_state*          previous;           // Previous frame original state
+} arb_node_update_func_arguments;
+typedef void(arb_node_update_func_signature)(const arb_node_update_func_arguments* a);
+typedef arb_node_update_func_signature* arb_node_update_func;
+
+typedef struct arb_node_layout_func_arguments {
+    const void*                     node_data;          // Node data
+    void*                           storage_data;       // Storage data
+    int                             resolution_x;       // Resolution width pixels
+    int                             resolution_y;       // Resolution height pixels
+    float                           delta_time;         // Time in seconds since last frame
+    arb_node_layout_state*          node_state;         // Node own state
+    size_t                          children_count;     // Node children count
+    arb_node_layout_state**         children_states;    // Node children states
+} arb_node_layout_func_arguments;
+typedef void(arb_node_layout_func_signature)(const arb_node_layout_func_arguments* a);
 typedef arb_node_layout_func_signature* arb_node_layout_func;
 
-typedef void(arb_node_transform_func_signature)(
-    const void*                     node_data,          // Node data
-    void*                           storage_data,       // Storage data
-    arb_mat3x2*                     transform,          // Given transform, can be changed
-    const arb_node_layout_state*    layout,             // Node layout state for info
-    int                             resolution_x,       // Screen resolution x
-    int                             resolution_y        // Screen resolution y
-);
+typedef struct arb_node_transform_func_arguments {
+    const void*                     node_data;          // Node data
+    void*                           storage_data;       // Storage data
+    int                             resolution_x;       // Resolution width pixels
+    int                             resolution_y;       // Resolution height pixels
+    float                           delta_time;         // Time in seconds since last frame
+    arb_mat3x2*                     transform;          // Given transform, can be changed
+    const arb_node_layout_state*    layout;             // Node layout state for info
+} arb_node_transform_func_arguments;
+typedef void(arb_node_transform_func_signature)(const arb_node_transform_func_arguments* a);
 typedef arb_node_transform_func_signature* arb_node_transform_func;
-
-typedef void(arb_node_input_func_signature)(
-    const void*                     node_data,          // Node data
-    void*                           storage_data,       // Storage data
-    arb_node_input_state*           node_input,         // Input state
-    const arb_node_layout_state*    layout,             // Node layout state for info
-    int                             resolution_x,       // Screen resolution x
-    int                             resolution_y        // Screen resolution y
-);
-typedef arb_node_input_func_signature* arb_node_input_func;
-
-// ===========================
-// Functions Declarations
-
-// Proper way to define layout funcs; Shortens code, allows changes
-#define ARB_NODE_LAYOUT_FUNC_DECL(func_name) \
-void func_name(const void* node_data, void* storage_data, arb_node_layout_state* node_state, size_t children_count, arb_node_layout_state** children_states)
-
-// Proper way to define transform funcs; Shortens code, allows changes
-#define ARB_NODE_TRANSFORM_FUNC_DECL(func_name) \
-void func_name(const void* node_data, void* storage_data, arb_mat3x2* transform,const arb_node_layout_state* layout, int resolution_x, int resolution_y)
-
-// Proper way to define cursor funcs; Shortens code, allows changes
-#define ARB_NODE_INPUT_FUNC_DECL(func_name) \
-void func_name(const void* node_data, void* storage_data, arb_node_input_state* node_input, const arb_node_layout_state* layout, int resolution_x, int resolution_y)
 
 // ===========================
 // Node Typedefs
@@ -228,7 +214,13 @@ typedef struct arb_type {
     // each of them pointing to a container child. See ARB_ELEM helper.
     int array_child;
 
-    // Layout Stages
+    // Update Pass
+
+    // First update pass
+    // Handles input and logic of nodes
+    arb_node_update_func    update;
+
+    // Layout Passes
 
     // First layout stage
     // Generates desired nodes widths, bottom-up
@@ -260,19 +252,13 @@ typedef struct arb_type {
     // OUT: [node offset from center]
     arb_node_layout_func    position;
 
-    // Rendering Stages
+    // Rendering Passes
 
-    // First render stage
+    // First render pass
     // Allow altering children render transforms, top down
     // IN:  [complete layout states, parent render transform]
     // OUT: [own and children render transform]
     arb_node_transform_func transform;
-
-    // Input
-
-    // Funtion solving cursor/typewriter input
-    // Called every frame after render
-    arb_node_input_func     input;
 } arb_type;
 
 typedef enum arb_flag {
@@ -664,16 +650,16 @@ typedef struct arb_draw_request {
 
 typedef struct arb_requests {
     // Resolution UI was layed for
-    uint32_t resolution_x;
-    uint32_t resolution_y;
+    uint32_t    resolution_x;
+    uint32_t    resolution_y;
 
     // Minimum desired UI
-    uint32_t minimum_x;
-    uint32_t minimum_y;
+    uint32_t    minimum_x;
+    uint32_t    minimum_y;
 
     // Maximum UI size
-    uint32_t maximum_x;
-    uint32_t maximum_y;
+    uint32_t    maximum_x;
+    uint32_t    maximum_y;
 
     // Text free requests
     size_t                          text_free_count;
@@ -693,6 +679,14 @@ typedef struct arb_requests {
 } arb_requests;
 
 // ===========================
+// Operation Status
+
+typedef enum arb_status {
+    arb_status_okay,
+    arb_status_allocation_failed,   // Allocation failed
+} arb_status;
+
+// ===========================
 // Cache
 
 arb_cache* arb_create_cache();
@@ -701,7 +695,7 @@ void arb_free_cache(arb_cache*);
 // Function updating UI
 // Returns structure allowing access to cache-owned upload/render lists
 // The pointers will be valid until arb_cache_update is called again
-void arb_cache_update(
+arb_status arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -714,7 +708,7 @@ void arb_cache_update(
 // Can be called before free cache
 // To get free text requests, if user
 // is willing to clean the glyphs buffer
-void arb_cache_free_all_text(
+arb_status arb_cache_free_all_text(
     arb_cache*          cache,
     arb_requests*       out_requests
 );
@@ -812,17 +806,64 @@ static void stable_sort(void* base, size_t nmemb, size_t size, int (*compar)(con
 }
 
 // ===========================
-// Cache Object
+// Invalidation Bits
 
-typedef struct cache_slot cache_slot;
-typedef struct text_cache_slot text_cache_slot;
-typedef struct storage_cache_slot storage_cache_slot;
-typedef struct input_box input_box;
+typedef enum invalidation_flag_bit {
+    invalidation_flag_bit_text              = 1,
+    invalidation_flag_bit_width_measure     = 2,
+    invalidation_flag_bit_width_distribute  = 4,
+    invalidation_flag_bit_height_measure    = 8,
+    invalidation_flag_bit_height_distribute = 16,
+    invalidation_flag_bit_position          = 32,
+} invalidation_flag_bit;
+typedef unsigned char invalidation_mask;
+
+// ===========================
+// Cache Object
 
 typedef enum emergency_jump_flag {
     emergency_jump_flag_grow_occured = 1,
     emergency_jump_flag_allocation_failure 
 } emergency_jump_flag;
+
+typedef struct node_stable_index {
+    const arb_node*         node;
+    const void*             instance;
+} node_stable_index;
+
+typedef struct cache_slot {
+    node_stable_index       key;
+    unsigned char           last_frame_used;
+    size_t                  value_child_count;
+    arb_node_layout_state   value_state;
+} cache_slot;
+
+typedef struct text_cache_slot {
+    node_stable_index       key;
+    unsigned char           last_frame_used;
+    unsigned char           last_frame_rebuild;
+    int                     text_width;
+    int                     text_height;
+    void*                   allocation;
+} text_cache_slot;
+
+typedef struct storage_cache_slot {
+    node_stable_index       key;
+    unsigned char           last_frame_used;
+    uint64_t                bytes;
+    void*                   allocation;
+} storage_cache_slot;
+
+typedef struct input_box {
+    node_stable_index       owner;
+    arb_node_update_func    handle;
+    cache_slot*             slot;
+    const void*             variable;
+    storage_cache_slot*     storage;
+    int                     clip_index;
+    short                   depth_index;
+    arb_mat3x2              box_transform;
+} input_box;
 
 struct arb_cache {
     // Passes constants
@@ -850,6 +891,11 @@ struct arb_cache {
     size_t                  storage_cache_fill;
     storage_cache_slot*     storage_cache_slots;
     
+    // Input boxes dynamic array
+    size_t                  input_boxes_capacity;
+    size_t                  input_boxes_count;
+    input_box*              input_boxes;
+
     // Text free requests dynamic array
     size_t                  text_free_requests_capacity;
     size_t                  text_free_requests_count;
@@ -870,10 +916,17 @@ struct arb_cache {
     size_t                  clipbox_requests_count;
     arb_clipbox_request*    clipbox_requests;
 
-    // Cursor input boxes dynamic array
-    size_t                  input_boxes_capacity;
-    size_t                  input_boxes_count;
-    input_box*              input_boxes;
+    // Flatten tree
+    // SoA design; Each array elements capacity >= flatten_tree_capacity; 
+    // flatten_tree_capacity is min of all
+    size_t                  flatten_tree_capacity;
+    size_t                  flatten_tree_count;
+    cache_slot**            flatten_tree_slots;
+    storage_cache_slot**    flatten_tree_storages;
+    const void**            flatten_tree_variables;
+    arb_node_layout_state** flatten_tree_states;
+    size_t*                 flatten_tree_subtrees;
+    invalidation_mask*      flatten_tree_masks;
 
     // Previous frame cursor state
     arb_input_state         previous_frame_input_state;
@@ -911,34 +964,6 @@ void arb_free_cache(arb_cache* cache) {
 
 // ===========================
 // Cache Hashmaps
-
-typedef struct node_stable_index {
-    const arb_node*         node;
-    const void*             instance;
-} node_stable_index;
-
-typedef struct cache_slot {
-    node_stable_index       key;
-    unsigned char           last_frame_used;
-    size_t                  value_child_count;
-    arb_node_layout_state   value_state;
-} cache_slot;
-
-typedef struct text_cache_slot {
-    node_stable_index       key;
-    unsigned char           last_frame_used;
-    unsigned char           last_frame_rebuild;
-    int                     text_width;
-    int                     text_height;
-    void*                   allocation;
-} text_cache_slot;
-
-typedef struct storage_cache_slot {
-    node_stable_index       key;
-    unsigned char           last_frame_used;
-    uint64_t                bytes;
-    void*                   allocation;
-} storage_cache_slot;
 
 static uint64_t hash_ptr(const void* p) {
     uint64_t x = (uint64_t)(uintptr_t)p;
@@ -1057,6 +1082,109 @@ DEFINE_HASHMAP_FUNCS(storage_cache, storage_cache_slot, storage_cache_slots, sto
 #undef HASHMAP_SLOT_DESTRUCTOR
 
 // ===========================
+// Cache dynamic arrays
+
+// Definies one function:
+// void PREFIX##_cache_push (arb_cache* cache, ELEMENT_TYPE element);
+#define DEFINE_DYNAMIC_ARRAY_FUNCS(PREFIX, ELEMENT_TYPE, ARRAY_FIELD, CAP_FIELD, CNT_FIELD)     \
+static int PREFIX##_cache_push(arb_cache* cache, ELEMENT_TYPE element) {                        \
+    if (cache->CNT_FIELD + 1 > cache->CAP_FIELD) {                                              \
+        size_t          new_cap = cache->CAP_FIELD ? cache->CAP_FIELD * 2 : 64;                 \
+        ELEMENT_TYPE*   new_arr = realloc(cache->ARRAY_FIELD, new_cap * sizeof(ELEMENT_TYPE));  \
+        if (!new_arr)   return - 1;                                                             \
+\
+        cache->ARRAY_FIELD  = new_arr;                                                          \
+        cache->CAP_FIELD    = new_cap;                                                          \
+    }                                                                                           \
+\
+    cache->ARRAY_FIELD[cache->CNT_FIELD] = element;                                             \
+    return (int)cache->CNT_FIELD++;                                                             \
+}
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    text_free_request, arb_text_free_request, text_free_requests, text_free_requests_capacity, text_free_requests_count
+);
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    text_alloc_request, arb_text_alloc_request, text_alloc_requests, text_alloc_requests_capacity, text_alloc_requests_count
+);
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    draw_request, arb_draw_request, draw_requests, draw_requests_capacity, draw_requests_count
+);
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    clipbox_request, arb_clipbox_request, clipbox_requests, clipbox_requests_capacity, clipbox_requests_count
+);
+
+DEFINE_DYNAMIC_ARRAY_FUNCS(
+    input_box, input_box, input_boxes, input_boxes_capacity, input_boxes_count
+);
+
+static inline void free_cached_text_alloc_requests(arb_cache* cache) {
+    for (size_t i = 0; i < cache->text_alloc_requests_count; i++) {
+        free(cache->text_alloc_requests[i].glyphs);
+    }
+    cache->text_alloc_requests_count = 0;
+}
+// ===========================
+// Cache flatten tree
+
+static void flatten_tree_cache_free(arb_cache* cache) {
+    free(cache->flatten_tree_variables);    cache->flatten_tree_variables = NULL;
+    free(cache->flatten_tree_slots);        cache->flatten_tree_slots = NULL;
+    free(cache->flatten_tree_storages);     cache->flatten_tree_storages = NULL;
+    free(cache->flatten_tree_states);       cache->flatten_tree_states = NULL;
+    free(cache->flatten_tree_subtrees);     cache->flatten_tree_subtrees = NULL;
+    cache->flatten_tree_capacity = 0;       cache->flatten_tree_count = 0;
+}
+
+static void flatten_tree_cache_clear(arb_cache* cache) {
+    cache->flatten_tree_count = 0;
+}
+
+static void flatten_tree_cache_push(
+    arb_cache*              cache,
+    cache_slot*             slot,
+    storage_cache_slot*     storage,
+    const void*             variable,
+    arb_node_layout_state*  state,
+    size_t                  subtree,
+    invalidation_mask       mask
+) {
+    if (cache->flatten_tree_count >= cache->flatten_tree_capacity) {
+        size_t new_cap = cache->flatten_tree_capacity ? cache->flatten_tree_capacity * 2 : 64;
+
+        #define ARRAY_REALLOC(ARRAY) do {                       \
+            void* new_ptr = realloc(                            \
+                cache->flatten_tree_##ARRAY,                    \
+                new_cap * sizeof(*cache->flatten_tree_##ARRAY)  \
+            );                                                  \
+            if (!new_ptr) longjmp(cache->emergency, emergency_jump_flag_allocation_failure); \
+            cache->flatten_tree_##ARRAY = new_ptr;  \
+        } while (0)
+        ARRAY_REALLOC(variables);
+        ARRAY_REALLOC(slots);
+        ARRAY_REALLOC(storages);
+        ARRAY_REALLOC(states);
+        ARRAY_REALLOC(subtrees);
+        ARRAY_REALLOC(masks);
+        #undef ARRAY_REALLOC
+
+        cache->flatten_tree_capacity = new_cap;
+    }
+
+    size_t index = cache->flatten_tree_count;
+    cache->flatten_tree_variables[index]= variable;
+    cache->flatten_tree_slots[index]    = slot;
+    cache->flatten_tree_storages[index] = storage;
+    cache->flatten_tree_states[index]   = state;
+    cache->flatten_tree_subtrees[index] = subtree;
+    cache->flatten_tree_masks[index]    = mask;
+    cache->flatten_tree_count++;
+}
+
+// ===========================
 // Node fields reads
 
 static void* safe_storage_slot_get_allocation(storage_cache_slot* slot);
@@ -1130,67 +1258,6 @@ static void* safe_storage_slot_get_allocation(storage_cache_slot* slot) {
 }
 
 // ===========================
-// Input Box
-
-typedef struct input_box {
-    node_stable_index       owner;
-    arb_node_input_func     handle;
-    cache_slot*             slot;
-    const void*             variable;
-    storage_cache_slot*     storage;
-    int                     clip_index;
-    short                   depth_index;
-    arb_mat3x2              box_transform;
-} input_box;
-
-// ===========================
-// Cache dynamic arrays
-
-// Definies one function:
-// void PREFIX##_cache_push (arb_cache* cache, ELEMENT_TYPE element);
-#define DEFINE_DYNAMIC_ARRAY_FUNCS(PREFIX, ELEMENT_TYPE, ARRAY_FIELD, CAP_FIELD, CNT_FIELD)     \
-static int PREFIX##_cache_push(arb_cache* cache, ELEMENT_TYPE element) {                        \
-    if (cache->CNT_FIELD + 1 > cache->CAP_FIELD) {                                              \
-        size_t          new_cap = cache->CAP_FIELD ? cache->CAP_FIELD * 2 : 64;                 \
-        ELEMENT_TYPE*   new_arr = realloc(cache->ARRAY_FIELD, new_cap * sizeof(ELEMENT_TYPE));  \
-        if (!new_arr)   return - 1;                                                             \
-\
-        cache->ARRAY_FIELD  = new_arr;                                                          \
-        cache->CAP_FIELD    = new_cap;                                                          \
-    }                                                                                           \
-\
-    cache->ARRAY_FIELD[cache->CNT_FIELD] = element;                                             \
-    return (int)cache->CNT_FIELD++;                                                             \
-}
-
-DEFINE_DYNAMIC_ARRAY_FUNCS(
-    text_free_request, arb_text_free_request, text_free_requests, text_free_requests_capacity, text_free_requests_count
-);
-
-DEFINE_DYNAMIC_ARRAY_FUNCS(
-    text_alloc_request, arb_text_alloc_request, text_alloc_requests, text_alloc_requests_capacity, text_alloc_requests_count
-);
-
-DEFINE_DYNAMIC_ARRAY_FUNCS(
-    draw_request, arb_draw_request, draw_requests, draw_requests_capacity, draw_requests_count
-);
-
-DEFINE_DYNAMIC_ARRAY_FUNCS(
-    clipbox_request, arb_clipbox_request, clipbox_requests, clipbox_requests_capacity, clipbox_requests_count
-);
-
-DEFINE_DYNAMIC_ARRAY_FUNCS(
-    input_box, input_box, input_boxes, input_boxes_capacity, input_boxes_count
-);
-
-static inline void free_cached_text_alloc_requests(arb_cache* cache) {
-    for (size_t i = 0; i < cache->text_alloc_requests_count; i++) {
-        free(cache->text_alloc_requests[i].glyphs);
-    }
-    cache->text_alloc_requests_count = 0;
-}
-
-// ===========================
 // Text layout generation
 
 static void create_text_request(arb_cache* cache, text_cache_slot* slot, const arb_text_data* tdata) {
@@ -1221,553 +1288,77 @@ static void create_text_request(arb_cache* cache, text_cache_slot* slot, const a
 }
 
 // ===========================
+// Update Pass
+
+static void update_pass(
+    arb_cache*      cache, 
+    arb_input_state input_state, 
+    float           delta_time
+) {
+    // Find out normalized cursor position
+    float norm_cursor_x = -1.0f + 2.0f * ((float)input_state.cursor.position_x / cache->resolution_x);
+    float norm_cursor_y =  1.0f - 2.0f * ((float)input_state.cursor.position_y / cache->resolution_y);
+
+    // Construct input states
+    arb_input_state changable_state = input_state;
+    arb_node_update_func_arguments args = {
+        .resolution_x   = cache->resolution_x,
+        .resolution_y   = cache->resolution_y,
+        .mutable        = &changable_state,
+        .original       = &input_state,
+        .previous       = &cache->previous_frame_input_state,
+        .delta_time     = delta_time
+    };
+
+    // Do input callbacks, walking from topmost to deepest
+    int ever_was_inside = 0; if (cache->input_boxes_count) for (size_t i = cache->input_boxes_count - 1; ; i--) {
+        input_box* ibox = &cache->input_boxes[i];
+
+        int cursor_inside  = is_point_in_transformed_box(ibox->box_transform, norm_cursor_x, norm_cursor_y);
+        int clipbox_index = ibox->clip_index; while (clipbox_index != -1) {
+            arb_clipbox_request req = cache->clipbox_requests[clipbox_index];
+            cursor_inside &= is_point_in_transformed_box(req.transform, norm_cursor_x, norm_cursor_y);
+            if (!cursor_inside) break;
+            clipbox_index = req.parent;
+        }
+
+        args.node_data = get_node_data(
+            ibox->owner.node, 
+            ibox->owner.instance, 
+            ibox->variable, 
+            ibox->storage
+        );
+
+        args.storage_data = safe_storage_slot_get_allocation(ibox->storage);
+        args.node_state   = &ibox->slot->value_state;
+        args.hovered     = cursor_inside && !ever_was_inside;
+        args.raw_hovered = cursor_inside;
+
+        if (ibox->handle) ibox->handle(&args);
+        ever_was_inside |= cursor_inside;
+        if (i == 0) break; // break loop at last element
+    }
+
+    // Current state in now previous input state
+    cache->previous_frame_input_state = input_state;
+}
+
+// ===========================
+// Flatten Pass
+
+static void flatten_pass(
+    arb_cache*      cache,
+    const arb_node* root,
+    float           delta_time
+) {
+    
+}
+
+// ===========================
 // Cache Update
 
-// Invalidation Node Gate
-
-typedef enum invalidation_flag_only {
-    invalidation_flag_only_text              = 1,
-    invalidation_flag_only_width_measure     = 2,
-    invalidation_flag_only_width_distribute  = 4,
-    invalidation_flag_only_height_measure    = 8,
-    invalidation_flag_only_height_distribute = 16,
-    invalidation_flag_only_position          = 32,
-} invalidation_flag_only;
-
-static inline int find_shall_recurse(cache_slot* node_slot, const void* data, invalidation_flag_only pass) {
-    if (node_slot->key.node->type != &arb_invalidation_type) return 1;
-    const arb_invalidation_data* inv_data = data; // special case where const may be discarded
-
-    // Recurse one time in this pass
-    if (inv_data->flag_consumable_ptr && (*inv_data->flag_consumable_ptr & pass)) {
-        *inv_data->flag_consumable_ptr &= ~(pass);   // turn off this pass bit
-        return 1;
-    }
-
-    // Recurse if marked always to do it
-    if (!inv_data->flag_always_ptr) return 0;
-    return *inv_data->flag_always_ptr & pass;
-}
-
-// Cache Walk Pass
-// Called on remeasure
-// Computes: 
-// - walk order (the order layout caches are visited, to avoid hashmaping multiple times)
-// - nodes children count (simplify implementations)
-// - nodes subtree size (including self, to easily skip on invalidation nodes)
-
-// shall initialized with cache and 0 in other fields
-typedef struct caches_walk_order {
-    arb_cache*              cache;      // Cache owning cache slots
-    size_t                  capacity;   // In cache_slot pointers
-    size_t                  position;   // In cache_slot pointers
-    const void**            variables;  // Sized capacity, variable value at node
-    cache_slot**            slots;      // Sized capacity, node cache slots in enter order
-    storage_cache_slot**    storages;   // Sized capacity, node storage slots in enter order
-    arb_node_layout_state** states;     // Sized capacity, node layout states in enter order
-    size_t*                 subtree;    // Sized capacity, node subtree size, including self
-} caches_walk_order;
-
-// Guaranteed valid 0-intialized object after free
-// except cache field being untouched
-static void free_caches_walk_order(caches_walk_order* order) {
-    free(order->variables); order->variables= NULL;
-    free(order->slots);     order->slots    = NULL;
-    free(order->storages);  order->storages = NULL;
-    free(order->states);    order->states   = NULL;
-    free(order->subtree);   order->subtree  = NULL;
-    order->capacity = 0;    order->position = 0;
-}
-
-// Returns non-zero at success
-static inline void caches_walk_order_push(
-    caches_walk_order* walk_order, cache_slot* slot, const void* variable, storage_cache_slot* storage_slot
-) {
-    if (walk_order->position + 1 > walk_order->capacity) {
-        size_t new_cap = walk_order->capacity ? walk_order->capacity * 2 : 64;
-    
-        const void**            new_var = realloc(walk_order->variables,new_cap * sizeof(const void*));
-        cache_slot**            new_slt = realloc(walk_order->slots,    new_cap * sizeof(cache_slot*));
-        storage_cache_slot**    new_sto = realloc(walk_order->storages, new_cap * sizeof(storage_cache_slot*));
-        arb_node_layout_state** new_sts = realloc(walk_order->states,   new_cap * sizeof(arb_node_layout_state*));
-        size_t*                 new_sub = realloc(walk_order->subtree,  new_cap * sizeof(size_t));
-
-        if (!new_var || !new_slt || !new_sto || !new_sts || !new_sub) {
-            if (new_var) free(new_var); else free(walk_order->variables);
-            if (new_slt) free(new_slt); else free(walk_order->slots);
-            if (new_sto) free(new_sto); else free(walk_order->storages);
-            if (new_sts) free(new_sts); else free(walk_order->states);
-            if (new_sub) free(new_sub); else free(walk_order->subtree);
-            *walk_order = (caches_walk_order){ // Zero everything keep cache
-                .cache = walk_order->cache
-            }; 
-            longjmp(walk_order->cache->emergency, emergency_jump_flag_allocation_failure);
-        }
-
-        walk_order->capacity = new_cap;
-        walk_order->variables= new_var;
-        walk_order->slots    = new_slt;
-        walk_order->storages = new_sto;
-        walk_order->states   = new_sts;
-        walk_order->subtree  = new_sub;
-    }
-
-    walk_order->variables[walk_order->position] = variable;
-    walk_order->slots    [walk_order->position] = slot;
-    walk_order->storages [walk_order->position] = storage_slot;
-    walk_order->states   [walk_order->position] = &slot->value_state;
-    walk_order->subtree  [walk_order->position] = 0;
-    walk_order->position++;
-}
-
-// Pushes all child nodes caches of node to caches_walk_order
-// Recurse into children left to right; Retuns subtree size
-static size_t caches_walk_dfs(
-    caches_walk_order*  walk_order, 
-    cache_slot*         current, 
-    const void*         instance,
-    const void*         variable,
-    storage_cache_slot* storage
-) {
-    const arb_node* node  = current->key.node;
-    const arb_node* child = get_node_child(current->key.node, current->key.instance, variable, storage);
-    size_t          count = 0;
-
-    // Change instance for subtree
-    if (node->type == &arb_instance_type) {
-        instance = get_node_data(current->key.node, instance, variable, storage);
-    }
-
-    // Change variable for subtree
-    if (node->type == &arb_variable_type) {
-        variable = get_node_data(current->key.node, instance, variable, storage);
-    }
-
-    // Load storage slot
-    if (node->type == &arb_storage_type) {
-        storage = storage_cache_hashmap_get(walk_order->cache, current->key);   // Get without alloc, as alloc happen in render
-    }
-
-    if (node->type) {
-        if (!node->type->array_child && child) {
-            cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){child, instance});
-            caches_walk_order_push(walk_order, child_slot, variable, storage); count++;
-        }
-        else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
-            cache_slot* child_slot = cache_hashmap_get(walk_order->cache, (node_stable_index){cc, instance});
-            caches_walk_order_push(walk_order, child_slot, variable, storage); count++;
-        }
-    }
-
-    // Recurse
-    size_t begin_pos = walk_order->position - count;
-    size_t subtree = 1; // This node itself
-    for (size_t i = 0; i < count; i++) {
-        size_t children_subtree = caches_walk_dfs(walk_order, walk_order->slots[begin_pos + i], instance, variable, storage);
-        walk_order->subtree[begin_pos + i] = children_subtree; // Enforce caches_walk_dfs evaluaton before LHS
-        subtree += walk_order->subtree[begin_pos + i];  // This subtree = Self + All children subtrees
-    }
-
-    current->value_child_count = count;
-    return subtree;
-}
-
-// Generic layout dfs generation macros
-
-// Definies function:
-// void PREFIX##_dfs(caches_walk_order* walk_order, cache_slot* current, size_t first_child)
-// Exec order: recurse -> own function -> additional code
-#define BOTTOM_UP_DFS(PREFIX, TYPE_FUNC_NAME, INV_PASS_ONLY_FLAG, ...)                              \
-static void PREFIX##_dfs(                                                                           \
-    caches_walk_order*  walk_order,                                                                 \
-    cache_slot*         current,                                                                    \
-    const void*         variable,                                                                   \
-    storage_cache_slot* storage,                                                                    \
-    size_t              first_child                                                                 \
-) {                                                                                                 \
-    cache_slot**         children  = &walk_order->slots[first_child];                               \
-    size_t*              subtrees  = &walk_order->subtree[first_child];                             \
-    const void**         variables = &walk_order->variables[first_child];                           \
-    storage_cache_slot** storages  = &walk_order->storages[first_child];                            \
-\
-    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);  \
-\
-    if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
-        size_t child_first_child = first_child + current->value_child_count;                        \
-        for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);    \
-            child_first_child += subtrees[i] - 1;                                                   \
-        }                                                                                           \
-    }                                                                                               \
-\
-    arb_node_layout_func func = current->key.node->type->TYPE_FUNC_NAME;                            \
-    if (func != NULL) func(                                                                         \
-        data, safe_storage_slot_get_allocation(storage),                                            \
-        &current->value_state, current->value_child_count, &walk_order->states[first_child]         \
-    );                                                                                              \
-\
-    __VA_ARGS__                                                                                     \
-}
-
-// Definies function:
-// void PREFIX##_dfs(caches_walk_order* walk_order, cache_slot* current, size_t first_child)
-// Exec order: additional code -> own function -> recurse
-#define TOP_DOWN_DFS(PREFIX, TYPE_FUNC_NAME, INV_PASS_ONLY_FLAG, ...)                               \
-static void PREFIX##_dfs(                                                                           \
-    caches_walk_order*  walk_order,                                                                 \
-    cache_slot*         current,                                                                    \
-    const void*         variable,                                                                   \
-    storage_cache_slot* storage,                                                                    \
-    size_t              first_child                                                                 \
-) {                                                                                                 \
-    cache_slot**         children = &walk_order->slots[first_child];                                \
-    size_t*              subtrees = &walk_order->subtree[first_child];                              \
-    const void**         variables = &walk_order->variables[first_child];                           \
-    storage_cache_slot** storages = &walk_order->storages[first_child];                             \
-\
-    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);  \
-\
-    __VA_ARGS__                                                                                     \
-\
-    arb_node_layout_func func = current->key.node->type->TYPE_FUNC_NAME;                            \
-    if (func != NULL) func(                                                                         \
-        data, safe_storage_slot_get_allocation(storage),                                            \
-        &current->value_state, current->value_child_count, &walk_order->states[first_child]         \
-    );                                                                                              \
-\
-    if (find_shall_recurse(current, data, INV_PASS_ONLY_FLAG)) {                                    \
-        size_t child_first_child = first_child + current->value_child_count;                        \
-        for (size_t i = 0; i < current->value_child_count; i++) {                                   \
-            PREFIX##_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);    \
-            child_first_child += subtrees[i] - 1;                                                   \
-        }                                                                                           \
-    }                                                                                               \
-}
-
-// Layout passes
-// Travels tree, call functions as specified in type comments
-// to calcualate what specfied in type comments
-
-// Text generate pass
-static void text_gen_dfs(
-    caches_walk_order*  walk_order,
-    cache_slot*         current,
-    const void*         variable,
-    storage_cache_slot* storage,
-    size_t              first_child
-) {
-    cache_slot**         children = &walk_order->slots[first_child];
-    size_t*              subtrees = &walk_order->subtree[first_child];
-    const void**         variables = &walk_order->variables[first_child];
-    storage_cache_slot** storages = &walk_order->storages[first_child];
-
-    const void* data = get_node_data(current->key.node, current->key.instance, variable, storage);
-
-    if (find_shall_recurse(current, data, invalidation_flag_only_text)) {
-        size_t child_first_child = first_child + current->value_child_count;
-        for (size_t i = 0; i < current->value_child_count; i++) {
-            text_gen_dfs(walk_order, children[i], variables[i], storages[i], child_first_child);
-            child_first_child += subtrees[i] - 1;
-        }
-    }
-
-    if (current->key.node->type == &arb_text_type) {
-        text_cache_slot* text_cache = text_cache_hashmap_get(walk_order->cache, current->key);
-        create_text_request(walk_order->cache, text_cache, (const arb_text_data*)data);
-        current->value_state.measured_width  = (arb_length){text_cache->text_width,  text_cache->text_width, 1};
-        current->value_state.measured_height = (arb_length){text_cache->text_height, text_cache->text_height, 1};
-    }
-}
-
-// Width measure pass, additionaly handle ignore flags
-BOTTOM_UP_DFS(
-    width_measure, width_measure, invalidation_flag_only_width_measure,
-    if (current->key.node->flags & arb_flag_ignore_min_width) {
-        current->value_state.measured_width.min = 0;
-        current->value_state.measured_width.flex = 1.0f;
-    }
-    if (current->key.node->flags & arb_flag_ignore_max_width) {
-        current->value_state.measured_width.max  = ARB_INF_LENGTH;
-        current->value_state.measured_width.flex = 1.0f;
-    }
-    if (current->key.node->flags & arb_flag_set_max_to_min_width) {
-        current->value_state.measured_width.max = current->value_state.measured_width.min;
-    }
-);
-
-// Width distribute pass, additionaly ensure received width
-// is within node measured limits
-TOP_DOWN_DFS(
-    width_distribute, width_distribute, invalidation_flag_only_width_distribute,
-    current->value_state.given_width = limit_length(
-        current->value_state.given_width,
-        current->value_state.measured_width
-    );
-);
-
-// Height measure pass, additionaly handle ignore flags
-BOTTOM_UP_DFS(
-    height_measure, height_measure, invalidation_flag_only_height_measure,
-    if (current->key.node->flags & arb_flag_ignore_min_height) {
-        current->value_state.measured_height.min = 0;
-        current->value_state.measured_height.flex = 1.0f;
-    }
-    if (current->key.node->flags & arb_flag_ignore_max_height) {
-        current->value_state.measured_height.max  = ARB_INF_LENGTH;
-        current->value_state.measured_height.flex = 1.0f;
-    }
-    if (current->key.node->flags & arb_flag_set_max_to_min_height) {
-        current->value_state.measured_height.max = current->value_state.measured_height.min;
-    }
-);
-
-// Height distribute pass, additionaly ensure received height 
-// is within node measured limits
-TOP_DOWN_DFS(
-    height_distribute, height_distribute, invalidation_flag_only_height_distribute,
-    current->value_state.given_height = limit_length(
-        current->value_state.given_height,
-        current->value_state.measured_height
-    );
-);
-
-// Position pass, no additional code
-TOP_DOWN_DFS(
-    position, position, invalidation_flag_only_position
-);
-
-// Renders widget
-// Issues rendering of ui primitives
-// Also renders input boxes into input dynamic array
-// Render pass is safe in terms of hashmap pointers invalidation
-// Since it refers on the pointer only on enter - after visiting any child it is not used
-
-typedef struct render_dfs_subtree_state {
-    const void*             variable;
-    const void*             instance;
-    short                   depth_index;
-    int                     clipbox_index;
-    arb_node_input_func    cursor_handle;
-    arb_node_transform_func    transform_handle;
-    storage_cache_slot*     storage_slot;
-    void*                   storage_data;
-} render_dfs_subtree_state;
-
-static void render_dfs(
-    arb_cache*                      cache, 
-    int                             previous_width,
-    int                             previous_height, 
-    const arb_node*                 node,
-    arb_mat3x2                      transform, 
-    const render_dfs_subtree_state* state
-);
-
-static inline void render_dfs_recurse(
-    arb_cache*                      cache, 
-    cache_slot*                     own,
-    arb_mat3x2                      transform, 
-    const render_dfs_subtree_state* state
-) {
-    const arb_node* child = get_node_child(own->key.node, own->key.instance, state->variable, state->storage_slot);
-
-    // back node dimensions to avoid reading own slot after visiting child
-    int own_width  = own->value_state.given_width;
-    int own_height = own->value_state.given_height;
-
-    // single child
-    if (!own->key.node->type->array_child && child) {
-        render_dfs(cache, own_width, own_height, child, transform, state);
-    }
-    // multiple children
-    else if (child) for (const arb_node* cc = child; cc->type == &arb_indirect_type; cc++) {
-        render_dfs(cache, own_width, own_height, cc, transform, state);
-    }
-}
-
-static void render_dfs(
-    arb_cache*                      cache, 
-    int                             previous_width,
-    int                             previous_height, 
-    const arb_node*                 node,
-    arb_mat3x2                      transform, 
-    const render_dfs_subtree_state* state
-) {
-    // At ARB_LAST node
-    if (node->type == NULL) return;
-    node_stable_index index = {node, state->instance};
-
-    // get node data
-    const void* data = get_node_data(node, state->instance, state->variable, state->storage_slot);
-    cache_slot* own  = cache_hashmap_get(cache, index);
-
-    // change transform based on node's position and scale
-    float off_x   = ((float)own->value_state.hori_offset * 2)   / cache->resolution_x;
-    float off_y   = ((float)own->value_state.vert_offset * 2)   / cache->resolution_y;
-    float scale_x = ((float)own->value_state.given_width)       / previous_width;
-    float scale_y = ((float)own->value_state.given_height)      / previous_height;
-    transform = arb_mat3x2_offset(transform, off_x, off_y);
-    transform = arb_mat3x2_scale (transform, scale_x, scale_y);
-
-    // Do transform if method provided
-    if (node->type->transform) node->type->transform(
-        data, state->storage_data, &transform,
-        &own->value_state, cache->resolution_x, cache->resolution_y
-    );
-
-    // Transform from transform call
-    if (node->type == &arb_transform_call_type && state->transform_handle) {
-        state->transform_handle(
-            data, state->storage_data, &transform, 
-            &own->value_state, cache->resolution_x, cache->resolution_y
-        );
-    }
-
-    // Push pinkbox request
-    if (node->flags & arb_flag_pink_box) {
-        draw_request_cache_push(cache, (arb_draw_request){
-            .transform          = transform,
-            .clip_index         = state->clipbox_index,
-            .depth_index        = state->depth_index,
-            .layout             = &own->value_state,
-            .is_box_not_text    = 1,
-            .box.data           = (arb_box_data){
-                .image  = NULL,
-                .shader = 0,
-                .tint   = ARB_HEX("#df04ba")
-            }
-        });
-    }
-
-    // Render Nodes
-    // Request box draw
-    if (node->type == &arb_box_type){
-        const arb_box_data* bdata = data;
-        draw_request_cache_push(cache, (arb_draw_request){
-            .transform          = transform,
-            .clip_index         = state->clipbox_index,
-            .depth_index        = state->depth_index,
-            .layout             = &own->value_state,
-            .is_box_not_text    = 1,
-            .box.data           = *bdata
-        });
-    }
-    // Request text draw
-    else if (node->type == &arb_text_type) {
-        const arb_text_data* tdata = data;
-        text_cache_slot* text_cache = text_cache_hashmap_get(cache, index);
-        if (tdata->style) draw_request_cache_push(cache, (arb_draw_request){
-            .transform          = transform,
-            .clip_index         = state->clipbox_index,
-            .depth_index        = state->depth_index,
-            .layout             = &own->value_state,
-            .is_box_not_text    = 0,
-            .text.pointer       = &text_cache->allocation,
-            .text.size          = tdata->style->size,
-            .text.font          = tdata->style->font,
-            .text.tint          = tdata->style->tint,
-            .text.shader        = tdata->style->shader
-        });
-    }
-
-    // Input
-    // Request input box
-    if (node->type->input) {
-        input_box_cache_push(cache, (input_box){
-            .owner          = index,
-            .handle         = node->type->input,
-            .slot           = own,
-            .variable       = state->variable,
-            .storage        = state->storage_slot,
-            .depth_index    = state->depth_index,
-            .clip_index     = state->clipbox_index,
-            .box_transform  = transform
-        });
-    }
-    if (node->type == &arb_input_call_type && state->cursor_handle) {
-        input_box_cache_push(cache, (input_box){
-            .owner          = index,
-            .handle         = state->cursor_handle,
-            .slot           = own,
-            .variable       = state->variable,
-            .storage        = state->storage_slot,
-            .depth_index    = state->depth_index,
-            .clip_index     = state->clipbox_index,
-            .box_transform  = transform
-        });
-    }
-
-    // New state for subtree
-    render_dfs_subtree_state new_state = *state;
-
-    // Special nodes
-    // Update instance for subtree
-    if (node->type == &arb_instance_type) {
-        new_state.instance = data;
-    }
-    // Update variable for subtee
-    else if (node->type == &arb_variable_type) {
-        new_state.variable = data;
-    }
-    // Update storage for subtree
-    else if (node->type == &arb_storage_type) {
-        new_state.storage_slot = storage_cache_hashmap_get_with_alloc(cache, index, state->variable, state->storage_slot);
-        new_state.storage_data = safe_storage_slot_get_allocation(new_state.storage_slot);
-    }
-    // Update depth for subtree
-    else if (node->type == &arb_depth_type) {
-        const arb_depth_data* ddata = data;
-        new_state.depth_index += ddata->depth_change;
-    }
-    // Update cursor handle for subtree
-    else if (node->type == &arb_input_handle_type) {
-        new_state.cursor_handle = (arb_node_input_func)data;
-    }
-    // Update trnasform handle for subtree
-    else if (node->type == &arb_transform_handle_type) {
-        new_state.transform_handle = (arb_node_transform_func)data;
-    }
-
-    // Clipbox flag
-    if (node->flags & arb_flag_clipbox) {
-        new_state.clipbox_index = clipbox_request_cache_push(cache, (arb_clipbox_request){
-            .transform = transform, .parent = state->clipbox_index
-        });
-    }
-
-    // Default recursion without state changes
-    render_dfs_recurse(cache, own, transform, &new_state);
-}
-
-// Helper for draw requests depth sorting : deepest first
-static inline int helper_draw_requests_greater_depth(const void* av, const void* bv) {
-    const arb_draw_request* a = (const arb_draw_request*)av; 
-    const arb_draw_request* b = (const arb_draw_request*)bv;
-    if (a->depth_index > b->depth_index) return -1;
-    if (a->depth_index < b->depth_index) return 1;
-    return 0;
-}
-
-// Helper for cursor input boxes depth sorting : deepest first
-static inline int helper_input_boxes_greater_depth(const void* av, const void* bv) {
-    const input_box* a = (const input_box*)av; 
-    const input_box* b = (const input_box*)bv;
-    if (a->depth_index > b->depth_index) return -1;
-    if (a->depth_index < b->depth_index) return 1;
-    return 0;
-}
-
-// Helper for free requests compare with qsort
-// Have propery that NULL pointer are left at end
-static inline int helper_free_requests_compare_value(const void* av, const void* bv) {
-    const arb_text_free_request* a = (const arb_text_free_request*)av;
-    const arb_text_free_request* b = (const arb_text_free_request*)bv;
-    if ((uintptr_t)a->text_pointer > (uintptr_t)b->text_pointer) return -1;
-    if ((uintptr_t)a->text_pointer < (uintptr_t)b->text_pointer) return  1;
-    return 0;
-}
-
 // Main update function, calls passes
-void arb_cache_update(
+arb_status arb_cache_update(
     arb_cache*          cache,
     const arb_node*     root,
     int                 resolution_x,
@@ -1779,18 +1370,15 @@ void arb_cache_update(
     // Clear output in case of early return
     *out_requests = (arb_requests){0};
 
-    // Walk order for remeasure
-    caches_walk_order walk_order = {.cache = cache};
-
     // Emergency fallback
     // May happen when growth in hashmap occurs, invalidating all pointers, then we redo everything
     // May happen when allocation failed, then we opt-out
     int setjmp_val = setjmp(cache->emergency);
     if (setjmp_val == emergency_jump_flag_allocation_failure) {
-        free_caches_walk_order(&walk_order); return;
+        return arb_status_allocation_failed;
     }
     else if (setjmp_val == emergency_jump_flag_grow_occured) {
-        walk_order.position = 0; // and redo everyting
+        // Redo everyting as pointer became dangling
     }
 
     // Init state
@@ -1801,155 +1389,15 @@ void arb_cache_update(
     cache->text_free_requests_count     = 0;
     cache->text_alloc_requests_count    = 0;
     cache->clipbox_requests_count       = 0;
-    cache->input_boxes_count            = 0;
+    cache->input_boxes_count            = 0;    // HERE!
 
-    // Render pass
-    render_dfs_subtree_state default_subtree_state = {
-        .instance       = NULL,
-        .depth_index    = 0,
-        .clipbox_index  = -1
-    };
-    render_dfs(cache, cache->resolution_x, cache->resolution_y, root, arb_mat3x2_identity(), &default_subtree_state);
-
-    // Sort render requests and input boxes by depth
-    stable_sort(cache->draw_requests,       cache->draw_requests_count,      sizeof(arb_draw_request), helper_draw_requests_greater_depth);
-    stable_sort(cache->input_boxes,  cache->input_boxes_count, sizeof(input_box), helper_input_boxes_greater_depth);
-
-    // Find out normalized cursor position
-    float norm_cursor_x = -1.0f + 2.0f * ((float)input_state.cursor.position_x / resolution_x);
-    float norm_cursor_y =  1.0f - 2.0f * ((float)input_state.cursor.position_y / resolution_y);
-
-    // Do input callbacks, walking from topmost to deepest
-    arb_input_state changable_state = input_state;
-    arb_node_input_state input_data = {
-        .resolution_x   = cache->resolution_x,
-        .resolution_y   = cache->resolution_y,
-        .mutable        = &changable_state,
-        .original       = &input_state,
-        .previous       = &cache->previous_frame_input_state,
-        .delta_time     = delta_time
-    };
     
-    int ever_was_inside = 0;
-    if (cache->input_boxes_count) for (size_t i = cache->input_boxes_count - 1; ; i--) {
-        input_box* ibox = &cache->input_boxes[i];
+    update_pass(cache, input_state, delta_time);    // Update UI; Handle input
+    flatten_pass(cache, root, delta_time);          // Generate flat traversal order
+    // Relayout UI
+    // Render and generate input boxes
 
-        int cursor_inside  = is_point_in_transformed_box(ibox->box_transform, norm_cursor_x, norm_cursor_y);
-        int clipbox_index = ibox->clip_index; while (clipbox_index != -1) {
-            arb_clipbox_request req = cache->clipbox_requests[clipbox_index];
-            cursor_inside &= is_point_in_transformed_box(req.transform, norm_cursor_x, norm_cursor_y);
-            if (!cursor_inside) break;
-            clipbox_index = req.parent;
-        }
-
-        input_data.hovered     = cursor_inside && !ever_was_inside;
-        input_data.raw_hovered = cursor_inside;
-        if (ibox->handle) ibox->handle(
-            get_node_data(ibox->owner.node, ibox->owner.instance, ibox->variable, ibox->storage), 
-            safe_storage_slot_get_allocation(ibox->storage), &input_data,
-            &ibox->slot->value_state, cache->resolution_x, cache->resolution_y
-        );
-
-        ever_was_inside |= cursor_inside;
-        if (i == 0) break; // break loop at last element
-    }
-
-    // Current state in now previous input state
-    cache->previous_frame_input_state = input_state;
-
-    // Relayout sequence begin
-    // Do it after render - then we can trust all nodes have their inserted cache and auxilary slots
-    // This is important so hashmap pointers does not get invalidated during passes
-    // This means we are one frame behind with layout, but it is not a big deal actually.
-    cache_slot* root_cache = cache_hashmap_get(cache, (node_stable_index){root, NULL});
-
-    // Give root entire screen
-    // Will auto bound to desired at distribute
-    root_cache->value_state.given_width  = resolution_x;
-    root_cache->value_state.given_height = resolution_y;
-
-    // Find walk order
-    size_t root_subtree = caches_walk_dfs(&walk_order, root_cache, NULL, NULL, NULL);
-    
-    // Perform all passes
-    text_gen_dfs(&walk_order, root_cache, NULL, NULL, 0);
-    width_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
-    width_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
-    height_measure_dfs(&walk_order, root_cache, NULL, NULL, 0);
-    height_distribute_dfs(&walk_order, root_cache, NULL, NULL, 0);
-    position_dfs(&walk_order, root_cache, NULL, NULL, 0);
-
-    free_caches_walk_order(&walk_order);
-
-    // Garbage collect dead cache entries
-    // If entry was not used in render, mark it free
-    // Do every 16 frames not to spend to much time on it
-    if (cache->frame_index % 16 == 0) {
-        cache_hashmap_garbage_collect(cache);
-        text_cache_hashmap_garbage_collect(cache);
-        storage_cache_hashmap_garbage_collect(cache);
-    }
-
-    // Pick next frame index
-    cache->frame_index++; if (cache->frame_index < LAST_FRAME_USED_FIRST) cache->frame_index = LAST_FRAME_USED_FIRST;
-
-    // Remove duplicate text_free_requests - those may appear when two diffent 
-    // branches IDIR to same text node (same node ptr, same instance ptr)
-    qsort(  // Sort to put duplicated together
-        cache->text_free_requests, cache->text_free_requests_count, 
-        sizeof(arb_text_free_request), helper_free_requests_compare_value
-    );
-    size_t erased_requests = 0; for (size_t i = 1; i < cache->text_free_requests_count; i++) {
-        if (cache->text_free_requests[i-1].text_pointer == cache->text_free_requests[i].text_pointer) {
-            cache->text_free_requests[i-1].text_pointer = NULL; erased_requests++;
-        }
-    };
-    if (erased_requests) qsort(  // Sort to put NULLs at the end
-        cache->text_free_requests, cache->text_free_requests_count, 
-        sizeof(arb_text_free_request), helper_free_requests_compare_value
-    );
-
-    // Return upload access
-    *out_requests = (arb_requests){
-        .resolution_x        = cache->resolution_x,
-        .resolution_y        = cache->resolution_y,
-
-        .minimum_x           = root_cache->value_state.measured_width.min,
-        .minimum_y           = root_cache->value_state.measured_height.min,
-
-        .maximum_x           = root_cache->value_state.measured_width.max,
-        .maximum_y           = root_cache->value_state.measured_height.max,
-
-        .text_free_count     = cache->text_free_requests_count - erased_requests,
-        .text_free_requests  = cache->text_free_requests,
-
-        .text_alloc_count    = cache->text_alloc_requests_count,
-        .text_alloc_requests = cache->text_alloc_requests,
-
-        .clipboxes_count     = cache->clipbox_requests_count,
-        .clipboxes_requests  = cache->clipbox_requests,
-
-        .draws_count         = cache->draw_requests_count,
-        .draws_requests      = cache->draw_requests,
-    };
-}
-
-void arb_cache_free_all_text(
-    arb_cache*          cache,
-    arb_requests*       out_requests
-) {
-    // Free all cached texts by using impossible value
-    cache->frame_index = LAST_FRAME_USED_IMPOSIBLE;
-    text_cache_hashmap_garbage_collect(cache);
-
-    // Set count to 0
-    cache->text_free_requests_count = 0;
-
-    // Return access to text free requests
-    *out_requests = (arb_requests){
-        .text_free_count    = cache->text_free_requests_count,
-        .text_free_requests = cache->text_free_requests
-    };
+    return arb_status_okay;
 }
 
 // ===========================
@@ -1978,49 +1426,46 @@ const arb_type arb_invalidation_type = box_behavior_type;
 // ===========================
 // Overlay Type
 
-ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_width_measure_func){
-    (void)node_data; (void)storage_data; arb_length own = {0, 0, 0.0f};
-
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_length child = children_states[i]->measured_width;
+void arb_overlay_width_measure_func(const arb_node_layout_func_arguments* args) {
+    arb_length own = {0, 0, 0.0f};
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_length child = args->children_states[i]->measured_width;
         own.min  = max_int(own.min, child.min);
         own.max  = max_int(own.max, child.max);
     }
 
     if (own.min != own.max) own.flex = 1.0f;
-    node_state->measured_width = own;
+    args->node_state->measured_width = own;
 }
 
-ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_width_distribute_func) {
-    (void)node_data;
-
-    for (size_t i = 0; i < children_count; ++i) {
-        children_states[i]->given_width = limit_length(node_state->given_width, children_states[i]->measured_width);
+void arb_overlay_width_distribute_func(const arb_node_layout_func_arguments* args) {
+    for (size_t i = 0; i < args->children_count; ++i) {
+        args->children_states[i]->given_width = limit_length(args->node_state->given_width, args->children_states[i]->measured_width);
     }
 }
 
-ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_height_measure_func) {
-    (void)node_data; arb_length own = {0, 0, 0.0f}; 
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_length child = children_states[i]->measured_height;
+void arb_overlay_height_measure_func(const arb_node_layout_func_arguments* args) {
+    arb_length own = {0, 0, 0.0f};
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_length child = args->children_states[i]->measured_height;
         own.min  = max_int(own.min, child.min);
         own.max  = max_int(own.max, child.max);
     }
 
     if (own.min != own.max) own.flex = 1.0f;
-    node_state->measured_height = own;
+    args->node_state->measured_height = own;
 }
 
-ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_height_distribute_func) {
-    (void)node_data; for (size_t i = 0; i < children_count; ++i) {
-        children_states[i]->given_height = limit_length(node_state->given_height, children_states[i]->measured_height);
+void arb_overlay_height_distribute_func(const arb_node_layout_func_arguments* args) {
+    for (size_t i = 0; i < args->children_count; ++i) {
+        args->children_states[i]->given_height = limit_length(args->node_state->given_height, args->children_states[i]->measured_height);
     }
 }
 
-ARB_NODE_LAYOUT_FUNC_DECL(arb_overlay_position_func) {
-    (void)node_data; for (size_t i = 0; i < children_count; ++i) {
-        children_states[i]->hori_offset = 0;
-        children_states[i]->vert_offset = 0;
+void arb_overlay_position_func(const arb_node_layout_func_arguments* args) {
+    for (size_t i = 0; i < args->children_count; ++i) {
+        args->children_states[i]->hori_offset = 0;
+        args->children_states[i]->vert_offset = 0;
     }
 }
 
@@ -2087,19 +1532,19 @@ const arb_type arb_storage_type = box_behavior_type;
 // ===========================
 // Align type
 
-static ARB_NODE_LAYOUT_FUNC_DECL(align_position){
-    const arb_align_data* data = node_data;
+static void align_position(const arb_node_layout_func_arguments* args) {
+    const arb_align_data* data = args->node_data;
 
     // Position children in horizontal axis
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_node_layout_state* child = children_states[i];
-        child->hori_offset = (node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_node_layout_state* child = args->children_states[i];
+        child->hori_offset = (args->node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
     }
 
     // Position children in vertial axis
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_node_layout_state* child = children_states[i];
-        child->vert_offset = (node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_node_layout_state* child = args->children_states[i];
+        child->vert_offset = (args->node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
     }
 }
 
@@ -2135,30 +1580,29 @@ static inline int padding_distribute_length(
     return remaining;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_measure) {
-    const arb_padding_data* data = node_data;
-    arb_length own = {0, 0, 0.0f};
+static void padding_width_measure(const arb_node_layout_func_arguments* args) {
+    const arb_padding_data* data = args->node_data;
     
     int child_min = 0, child_max = 0;
-    if (children_count > 0) {
-        child_min = children_states[0]->measured_width.min;
-        child_max = children_states[0]->measured_width.max;
+    if (args->children_count > 0) {
+        child_min = args->children_states[0]->measured_width.min;
+        child_max = args->children_states[0]->measured_width.max;
     }
 
     int w_min = data->left.min + child_min + data->right.min;
     int w_max = data->left.max + child_max + data->right.max;
 
-    node_state->measured_width = (arb_length){
+    args->node_state->measured_width = (arb_length){
         .min  = w_min,
         .max  = w_max,
         .flex = (w_min != w_max) ? 1.0f : 0.0f,
     };
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_distribute) {
-    if (children_count == 0) return;
-    const arb_padding_data* data = node_data;
-    arb_node_layout_state* child = children_states[0];
+static void padding_width_distribute(const arb_node_layout_func_arguments* args) {
+    if (args->children_count == 0) return;
+    const arb_padding_data* data = args->node_data;
+    arb_node_layout_state* child = args->children_states[0];
 
     // Give every element its minimum
     int left_w  = data->left.min;
@@ -2166,7 +1610,7 @@ static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_distribute) {
     int child_w = child->measured_width.min;
 
     // Divide remaining space, give leftover to child
-    int remaining = node_state->given_width - left_w - right_w - child_w;
+    int remaining = args->node_state->given_width - left_w - right_w - child_w;
     if (remaining > 0) {
         remaining = padding_distribute_length(
             &left_w, data->left, &right_w, data->right, &child_w, child->measured_width, remaining
@@ -2178,28 +1622,28 @@ static ARB_NODE_LAYOUT_FUNC_DECL(padding_width_distribute) {
     child->hori_offset = (left_w - right_w) / 2;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(padding_height_measure) {
-    const arb_padding_data* data = node_data;
+static void padding_height_measure(const arb_node_layout_func_arguments* args) {
+    const arb_padding_data* data = args->node_data;
     int child_min = 0, child_max = 0;
-    if (children_count > 0) {
-        child_min = children_states[0]->measured_height.min;
-        child_max = children_states[0]->measured_height.max;
+    if (args->children_count > 0) {
+        child_min = args->children_states[0]->measured_height.min;
+        child_max = args->children_states[0]->measured_height.max;
     }
 
     int h_min = data->top.min + child_min + data->bottom.min;
     int h_max = data->top.max + child_max + data->bottom.max;
 
-    node_state->measured_height = (arb_length){
+    args->node_state->measured_height = (arb_length){
         .min  = h_min,
         .max  = h_max,
         .flex = (h_min != h_max) ? 1.0f : 0.0f,
     };
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(padding_height_distribute) {
-    if (children_count == 0) return;
-    const arb_padding_data* data = node_data;
-    arb_node_layout_state* child = children_states[0];
+static void padding_height_distribute(const arb_node_layout_func_arguments* args) {
+    if (args->children_count == 0) return;
+    const arb_padding_data* data = args->node_data;
+    arb_node_layout_state* child = args->children_states[0];
 
     // Give every element its minimum
     int top_h    = data->top.min;
@@ -2207,7 +1651,7 @@ static ARB_NODE_LAYOUT_FUNC_DECL(padding_height_distribute) {
     int child_h  = child->measured_height.min;
 
     // Divide remaining space, give leftover to child
-    int remaining = node_state->given_height - top_h - bottom_h - child_h;
+    int remaining = args->node_state->given_height - top_h - bottom_h - child_h;
     if (remaining > 0) {
         remaining = padding_distribute_length(
             &top_h, data->top, &bottom_h, data->bottom, &child_h, child->measured_height, remaining
@@ -2232,20 +1676,20 @@ const arb_type arb_padding_type = {
 // ===========================
 // Sizebox Type
 
-static ARB_NODE_LAYOUT_FUNC_DECL(sizebox_width_measure) {
-    const arb_sizebox_data* data = node_data;
-    arb_overlay_width_measure_func(node_data, storage_data, node_state, children_count, children_states);
-    if (data->flag & arb_sizebox_overwrite_width_min)   node_state->measured_width.min   = data->width.min;
-    if (data->flag & arb_sizebox_overwrite_width_max)   node_state->measured_width.max   = data->width.max;
-    if (data->flag & arb_sizebox_overwrite_width_flex)  node_state->measured_width.flex  = data->width.flex;
+static void sizebox_width_measure(const arb_node_layout_func_arguments* args) {
+    const arb_sizebox_data* data = args->node_data;
+    arb_overlay_width_measure_func(args);
+    if (data->flag & arb_sizebox_overwrite_width_min)   args->node_state->measured_width.min   = data->width.min;
+    if (data->flag & arb_sizebox_overwrite_width_max)   args->node_state->measured_width.max   = data->width.max;
+    if (data->flag & arb_sizebox_overwrite_width_flex)  args->node_state->measured_width.flex  = data->width.flex;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(sizebox_height_measure) {
-    const arb_sizebox_data* data = node_data;
-    arb_overlay_height_measure_func(node_data, storage_data, node_state, children_count, children_states);
-    if (data->flag & arb_sizebox_overwrite_height_min)  node_state->measured_height.min  = data->height.min;
-    if (data->flag & arb_sizebox_overwrite_height_max)  node_state->measured_height.max  = data->height.max;
-    if (data->flag & arb_sizebox_overwrite_height_flex) node_state->measured_height.flex = data->height.flex;
+static void sizebox_height_measure(const arb_node_layout_func_arguments* args) {
+    const arb_sizebox_data* data = args->node_data;
+    arb_overlay_height_measure_func(args);
+    if (data->flag & arb_sizebox_overwrite_height_min)  args->node_state->measured_height.min  = data->height.min;
+    if (data->flag & arb_sizebox_overwrite_height_max)  args->node_state->measured_height.max  = data->height.max;
+    if (data->flag & arb_sizebox_overwrite_height_flex) args->node_state->measured_height.flex = data->height.flex;
 }
 
 const arb_type arb_sizebox_type = {
@@ -2261,45 +1705,45 @@ const arb_type arb_sizebox_type = {
 // ===========================
 // Row Type
 
-static ARB_NODE_LAYOUT_FUNC_DECL(row_width_measure) {
-    const arb_row_data* data = (const arb_row_data*)node_data;
+static void row_width_measure(const arb_node_layout_func_arguments* args) {
+    const arb_row_data* data = (const arb_row_data*)args->node_data;
     arb_length          own  = {0, 0, 0.0f};
 
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_length child = children_states[i]->measured_width;
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_length child = args->children_states[i]->measured_width;
         own.min += child.min; own.max += child.max;
     }
 
-    size_t spaces = children_count ? children_count - 1 : 0;
+    size_t spaces = args->children_count ? args->children_count - 1 : 0;
     own.min += spaces * data->spacing.min;
 
     if (own.max != ARB_INF_LENGTH && data->spacing.max != ARB_INF_LENGTH) own.max += spaces * data->spacing.max;
     else own.max = ARB_INF_LENGTH;
 
     if (own.min != own.max) own.flex = 1.0f;
-    node_state->measured_width = own;
+    args->node_state->measured_width = own;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(row_width_distribute) {
-    const arb_row_data* data = (const arb_row_data*)node_data;
+static void row_width_distribute(const arb_node_layout_func_arguments* args) {
+    const arb_row_data* data = (const arb_row_data*)args->node_data;
 
     // Find spaces count
-    size_t spaces_count = children_count ? children_count - 1 : 0;
+    size_t spaces_count = args->children_count ? args->children_count - 1 : 0;
 
     // Minimal pass
     int   used_width = 0;
     float flexsum    = 0.0f;
     int   spacing    = data->spacing.min;
-    for (size_t i = 0; i < children_count; ++i) {
-        flexsum += children_states[i]->measured_width.flex;
-        children_states[i]->given_width = children_states[i]->measured_width.min;
-        used_width += children_states[i]->given_width;
+    for (size_t i = 0; i < args->children_count; ++i) {
+        flexsum += args->children_states[i]->measured_width.flex;
+        args->children_states[i]->given_width = args->children_states[i]->measured_width.min;
+        used_width += args->children_states[i]->given_width;
     }
     flexsum += data->spacing.flex;
     used_width += spaces_count * data->spacing.min;
 
     // Divide extra space
-    int left_width = node_state->given_width - used_width;
+    int left_width = args->node_state->given_width - used_width;
     if (left_width < 0) left_width = 0;
     while (left_width) {
         float next_flexsum = 0.0f;
@@ -2318,9 +1762,9 @@ static ARB_NODE_LAYOUT_FUNC_DECL(row_width_distribute) {
         }
 
         // add to children
-        for (size_t i = 0; i < children_count; ++i) {
-            arb_length  m = children_states[i]->measured_width;
-            int* assigned = &children_states[i]->given_width;
+        for (size_t i = 0; i < args->children_count; ++i) {
+            arb_length  m = args->children_states[i]->measured_width;
+            int* assigned = &args->children_states[i]->given_width;
             if (*assigned == m.max) continue;   // maxed
 
             int gain = (int)(left_width * (m.flex / flexsum));
@@ -2340,22 +1784,22 @@ static ARB_NODE_LAYOUT_FUNC_DECL(row_width_distribute) {
     }
 
     // Position children in horizontal axis
-    int cursor_x = -node_state->given_width / 2;
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_node_layout_state* child = children_states[i];
+    int cursor_x = -args->node_state->given_width / 2;
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_node_layout_state* child = args->children_states[i];
         cursor_x += child->given_width / 2;
         child->hori_offset = cursor_x;
         cursor_x += child->given_width / 2 + spacing;
     }
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(row_position) {
-    const arb_row_data* data = (const arb_row_data*)node_data;
+static void row_position(const arb_node_layout_func_arguments* args) {
+    const arb_row_data* data = (const arb_row_data*)args->node_data;
 
     // Position children in vertial axis
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_node_layout_state* child = children_states[i];
-        child->vert_offset = (node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_node_layout_state* child = args->children_states[i];
+        child->vert_offset = (args->node_state->given_height - child->given_height) * (0.5f - data->vertical_align);
     }
 }
 
@@ -2372,45 +1816,45 @@ const arb_type arb_row_type = {
 // ===========================
 // Column Type
 
-static ARB_NODE_LAYOUT_FUNC_DECL(column_height_measure) {
-    const arb_column_data* data = (const arb_column_data*)node_data;
+static void column_height_measure(const arb_node_layout_func_arguments* args) {
+    const arb_column_data* data = (const arb_column_data*)args->node_data;
     arb_length             own  = {0, 0, 0.0f};
 
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_length child = children_states[i]->measured_height;
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_length child = args->children_states[i]->measured_height;
         own.min += child.min; own.max += child.max;
     }
 
-    size_t spaces = children_count ? children_count - 1 : 0;
+    size_t spaces = args->children_count ? args->children_count - 1 : 0;
     own.min += spaces * data->spacing.min;
 
     if (own.max != ARB_INF_LENGTH && data->spacing.max != ARB_INF_LENGTH) own.max += spaces * data->spacing.max;
     else own.max = ARB_INF_LENGTH;
 
     if (own.min != own.max) own.flex = 1.0f;
-    node_state->measured_height = own;
+    args->node_state->measured_height = own;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(column_height_distribute) {
-    const arb_column_data* data = (const arb_column_data*)node_data;
+static void column_height_distribute(const arb_node_layout_func_arguments* args) {
+    const arb_column_data* data = (const arb_column_data*)args->node_data;
 
     // Find spaces count
-    size_t spaces_count = children_count ? children_count - 1 : 0;
+    size_t spaces_count = args->children_count ? args->children_count - 1 : 0;
 
     // Minimal pass
     int   used_height = 0;
     float flexsum     = 0.0f;
     int   spacing     = data->spacing.min;
-    for (size_t i = 0; i < children_count; ++i) {
-        flexsum += children_states[i]->measured_height.flex;
-        children_states[i]->given_height = children_states[i]->measured_height.min;
-        used_height += children_states[i]->given_height;
+    for (size_t i = 0; i < args->children_count; ++i) {
+        flexsum += args->children_states[i]->measured_height.flex;
+        args->children_states[i]->given_height = args->children_states[i]->measured_height.min;
+        used_height += args->children_states[i]->given_height;
     }
     flexsum += data->spacing.flex;
     used_height += spaces_count * data->spacing.min;
 
     // Divide extra space
-    int left_height = node_state->given_height - used_height;
+    int left_height = args->node_state->given_height - used_height;
     if (left_height < 0) left_height = 0;
     while (left_height) {
         float next_flexsum = 0.0f;
@@ -2429,9 +1873,9 @@ static ARB_NODE_LAYOUT_FUNC_DECL(column_height_distribute) {
         }
 
         // add to children
-        for (size_t i = 0; i < children_count; ++i) {
-            arb_length  m = children_states[i]->measured_height;
-            int* assigned = &children_states[i]->given_height;
+        for (size_t i = 0; i < args->children_count; ++i) {
+            arb_length  m = args->children_states[i]->measured_height;
+            int* assigned = &args->children_states[i]->given_height;
             if (*assigned == m.max) continue;   // maxed
 
             int gain = (int)(left_height * (m.flex / flexsum));
@@ -2451,22 +1895,22 @@ static ARB_NODE_LAYOUT_FUNC_DECL(column_height_distribute) {
     }
 
     // Position children in vertical axis
-    int cursor_y = node_state->given_height / 2;
-    for (size_t i = 0; i < children_count; i++) {
-        arb_node_layout_state* child = children_states[i];
+    int cursor_y = args->node_state->given_height / 2;
+    for (size_t i = 0; i < args->children_count; i++) {
+        arb_node_layout_state* child = args->children_states[i];
         cursor_y -= child->given_height / 2;
         child->vert_offset = cursor_y;
         cursor_y -= child->given_height / 2 + spacing;
     }
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(column_position) {
-    const arb_column_data* data = (const arb_column_data*)node_data;
+static void column_position(const arb_node_layout_func_arguments* args) {
+    const arb_column_data* data = (const arb_column_data*)args->node_data;
 
     // Position children in horizontal axis
-    for (size_t i = 0; i < children_count; ++i) {
-        arb_node_layout_state* child = children_states[i];
-        child->hori_offset = (node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
+    for (size_t i = 0; i < args->children_count; ++i) {
+        arb_node_layout_state* child = args->children_states[i];
+        child->hori_offset = (args->node_state->given_width  - child->given_width)  * (data->horizontal_align - 0.5f);
     }
 }
 
@@ -2488,19 +1932,19 @@ typedef struct button_storage {
     arb_box_data current;
 } button_storage;
 
-static ARB_NODE_INPUT_FUNC_DECL(button_cursor_func) {
-    const arb_button_data*   data   = node_data;
+static void button_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_button_data*   data   = args->node_data;
     const arb_button_style*  style  = data->style;
     const arb_button_target* target = data->target;
-    button_storage*          stor   = storage_data;
+    button_storage*          stor   = args->storage_data;
 
-    arb_cursor_state crr = node_input->mutable->cursor;
-    arb_cursor_state prv = node_input->previous->cursor;
+    arb_cursor_state crr = args->mutable->cursor;
+    arb_cursor_state prv = args->previous->cursor;
 
     char just_pressed  = crr.left_down  && !prv.left_down;
     char just_released = !crr.left_down && prv.left_down;
 
-    if (just_pressed && node_input->hovered) {  // press started
+    if (just_pressed && args->hovered) {  // press started
         stor->pressed = 1;
         stor->current = *style->pressed_style;
         if (target->on_clicked) target->on_clicked(target->payload);
@@ -2513,11 +1957,11 @@ static ARB_NODE_INPUT_FUNC_DECL(button_cursor_func) {
     }
     else if (just_released && stor->pressed) {   // released
         stor->pressed = 0;
-        if (node_input->hovered) stor->current = *style->hovered_style;
+        if (args->hovered) stor->current = *style->hovered_style;
         else stor->current = *style->default_style;
         if (target->on_released)  target->on_released(target->payload);
     }
-    else if (node_input->hovered) stor->current = *style->hovered_style;    // hover
+    else if (args->hovered) stor->current = *style->hovered_style;    // hover
     else stor->current = *style->default_style;  // idle
 }
 
@@ -2546,16 +1990,16 @@ typedef struct scrollbox_storage {
 
 static const float scroll_speed_vertical = 2500;
 
-static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_scroll_cursor_func) {
-    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
-    if (node_input->raw_hovered) {
-        float pixel_change = node_input->mutable->cursor.scroll_delta * node_input->delta_time * scroll_speed_vertical;
+static void vertical_scrollbox_scroll_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_scrollbox_data* data = args->node_data; scrollbox_storage* stor = args->storage_data;
+    if (args->raw_hovered) {
+        float pixel_change = args->mutable->cursor.scroll_delta * args->delta_time * scroll_speed_vertical;
         stor->position -= pixel_change;
     }
 }
 
-static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_transform_func) {
-    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
+static void vertical_scrollbox_transform_func(const arb_node_transform_func_arguments* args) {
+    const arb_scrollbox_data* data = args->node_data; scrollbox_storage* stor = args->storage_data;
 
     // Calculate offset
     int offset_to_align = -stor->content_pixels / 2;  // start offseting from align - hardcoded top
@@ -2580,7 +2024,7 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_transform_func) {
     }
 
     // Offset transform
-    *transform = arb_mat3x2_offset(*transform, 0, 2 * (float)total_offset / resolution_y);
+    *args->transform = arb_mat3x2_offset(*args->transform, 0, 2 * (float)total_offset / args->resolution_y);
     stor->last_content_offset = total_offset;
 
     // Calculate handle size
@@ -2589,15 +2033,15 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_transform_func) {
     if (handle_height > stor->display_pixels) handle_height = stor->display_pixels;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(vertical_scrollbox_position) {
+static void vertical_scrollbox_position(const arb_node_layout_func_arguments* args) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
-    arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
+    arb_overlay_position_func(args);
 
     // Probe height
-    scrollbox_storage* stor = storage_data;
-    stor->display_pixels = node_state->given_height;
-    stor->content_pixels = children_count ? children_states[0]->given_height : 0;
+    scrollbox_storage* stor = args->storage_data;
+    stor->display_pixels = args->node_state->given_height;
+    stor->content_pixels = args->children_count ? args->children_states[0]->given_height : 0;
 }
 
 // Special type to offset content and probe height given and measured
@@ -2607,11 +2051,11 @@ static const arb_type vertical_scrollbox_scroller_type = {
     .transform  = vertical_scrollbox_transform_func
 };
 
-static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_handle_transform_func) {
-    scrollbox_storage* stor = storage_data;
+static void vertical_scrollbox_handle_transform_func(const arb_node_transform_func_arguments* args) {
+    scrollbox_storage* stor = args->storage_data;
 
     if (!stor->content_pixels) {
-        *transform = (arb_mat3x2){0}; return;
+        *args->transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle height as a fraction of displayed height
@@ -2643,25 +2087,25 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(vertical_scrollbox_handle_transform_func) {
     float sy = (float)height / stor->display_pixels;
 
     // Apply to transform
-    *transform = arb_mat3x2_offset(*transform, 0, 2 * (float)handle_offset / resolution_y);
-    *transform = arb_mat3x2_scale(*transform, 1, sy);
+    *args->transform = arb_mat3x2_offset(*args->transform, 0, 2 * (float)handle_offset / args->resolution_y);
+    *args->transform = arb_mat3x2_scale(*args->transform, 1, sy);
 }
 
-static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
-    const arb_scrollbox_data*  data  = node_data; 
+static void vertical_scrollbox_handle_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_scrollbox_data*  data  = args->node_data; 
     const arb_scrollbox_style* style = data->style;
-    scrollbox_storage*         stor  = storage_data;
+    scrollbox_storage*         stor  = args->storage_data;
 
     // Reset style
     stor->current_handle_style = *style->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
+    if (args->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
-    int left_pressed = node_input->mutable->cursor.left_down;
+    int left_pressed = args->mutable->cursor.left_down;
     if (left_pressed) {
-        int cursor_y = node_input->mutable->cursor.position_y;
+        int cursor_y = args->mutable->cursor.position_y;
         if (stor->handle_drag != -1) {                         // Was dragged
             int pixels_change = stor->handle_drag - cursor_y;  // Calculate pixel movement within handle
             float ratio = stor->display_pixels ? (float)stor->content_pixels / stor->display_pixels : 0.0f;
@@ -2671,14 +2115,14 @@ static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
             stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_y;
-            node_input->mutable->cursor.left_down = 0;   // Consume left click
+            args->mutable->cursor.left_down = 0;   // Consume left click
         }
-        else if (node_input->hovered) {
-            int c_left_pressed = node_input->mutable->cursor.left_down;
-            int p_left_pressed = node_input->previous->cursor.left_down;
+        else if (args->hovered) {
+            int c_left_pressed = args->mutable->cursor.left_down;
+            int p_left_pressed = args->previous->cursor.left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
             stor->handle_drag = cursor_y;
-            node_input->mutable->cursor.left_down = 0;   // Consume left click
+            args->mutable->cursor.left_down = 0;   // Consume left click
         }
     }
     else stor->handle_drag = -1;
@@ -2688,7 +2132,7 @@ static ARB_NODE_INPUT_FUNC_DECL(vertical_scrollbox_handle_cursor_func) {
 static const arb_type vertical_scrollbox_handle_type = {
     ARB_TYPE_OVERLAY_INIT,
     .transform  = vertical_scrollbox_handle_transform_func,
-    .input      = vertical_scrollbox_handle_cursor_func
+    .update     = vertical_scrollbox_handle_cursor_func
 };
 
 const arb_node vertical_scrollbox_main_body[] = {
@@ -2742,16 +2186,16 @@ const arb_node arb_vertical_scrollbox_structure[] = {
 
 static const float scroll_speed_horizontal = 3500;
 
-static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_scroll_cursor_func) {
-    const arb_scrollbox_data* data = node_data; scrollbox_storage* stor = storage_data;
-    if (node_input->raw_hovered) {
-        float pixel_change = node_input->mutable->cursor.scroll_delta * node_input->delta_time * scroll_speed_horizontal;
+static void horizontal_scrollbox_scroll_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_scrollbox_data* data = args->node_data; scrollbox_storage* stor = args->storage_data;
+    if (args->raw_hovered) {
+        float pixel_change = args->mutable->cursor.scroll_delta * args->delta_time * scroll_speed_horizontal;
         stor->position += pixel_change;
     }
 }
 
-static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_transform_func) {
-    scrollbox_storage* stor = storage_data;
+static void horizontal_scrollbox_transform_func(const arb_node_transform_func_arguments* args) {
+    scrollbox_storage* stor = args->storage_data;
 
     // Calculate offset
     int offset_to_align = stor->content_pixels / 2;  // start offseting from align - hardcoded left
@@ -2776,7 +2220,7 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_transform_func) {
     }
 
     // Offset transform
-    *transform = arb_mat3x2_offset(*transform, 2 * (float)total_offset / resolution_x, 0);
+    *args->transform = arb_mat3x2_offset(*args->transform, 2 * (float)total_offset / args->resolution_x, 0);
     stor->last_content_offset = total_offset;
 
     // Calculate handle size
@@ -2785,15 +2229,15 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_transform_func) {
     if (handle_width > stor->display_pixels) handle_width = stor->display_pixels;
 }
 
-static ARB_NODE_LAYOUT_FUNC_DECL(horizontal_scrollbox_position) {
+static void horizontal_scrollbox_position(const arb_node_layout_func_arguments* args) {
     // Do not position child, as it's transform is dynamic not static
     // Ensure static offset is 0
-    arb_overlay_position_func(node_data, storage_data, node_state, children_count, children_states);
+    arb_overlay_position_func(args);
 
     // Probe width
-    scrollbox_storage* stor = storage_data;
-    stor->display_pixels = node_state->given_width;
-    stor->content_pixels = children_count ? children_states[0]->given_width : 0;
+    scrollbox_storage* stor = args->storage_data;
+    stor->display_pixels = args->node_state->given_width;
+    stor->content_pixels = args->children_count ? args->children_states[0]->given_width : 0;
 }
 
 // Special type to offset content and probe width given and measured
@@ -2803,11 +2247,11 @@ static const arb_type horizontal_scrollbox_scroller_type = {
     .transform  = horizontal_scrollbox_transform_func
 };
 
-static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_handle_transform_func) {
-    scrollbox_storage* stor = storage_data;
+static void horizontal_scrollbox_handle_transform_func(const arb_node_transform_func_arguments* args) {
+    scrollbox_storage* stor = args->storage_data;
 
     if (!stor->content_pixels) {
-        *transform = (arb_mat3x2){0}; return;
+        *args->transform = (arb_mat3x2){0}; return;
     }
 
     // Find handle width as a fraction of displayed width
@@ -2839,25 +2283,25 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(horizontal_scrollbox_handle_transform_func) 
     float sx = (float)width / stor->display_pixels;
 
     // Apply to transform
-    *transform = arb_mat3x2_offset(*transform, 2 * (float)handle_offset / resolution_x, 0);
-    *transform = arb_mat3x2_scale(*transform, sx, 1);
+    *args->transform = arb_mat3x2_offset(*args->transform, 2 * (float)handle_offset / args->resolution_x, 0);
+    *args->transform = arb_mat3x2_scale(*args->transform, sx, 1);
 }
 
-static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
-    const arb_scrollbox_data*   data  = node_data; 
+static void horizontal_scrollbox_handle_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_scrollbox_data*   data  = args->node_data; 
     const arb_scrollbox_style*  style = data->style;
-    scrollbox_storage*          stor  = storage_data;
+    scrollbox_storage*          stor  = args->storage_data;
 
     // Reset style
     stor->current_handle_style = *style->default_style;
 
     // Set style to hovered if hovered
-    if (node_input->hovered) stor->current_handle_style = *style->hovered_style;
+    if (args->hovered) stor->current_handle_style = *style->hovered_style;
 
     // Scroll by draging handle
-    int left_pressed = node_input->mutable->cursor.left_down;
+    int left_pressed = args->mutable->cursor.left_down;
     if (left_pressed) {
-        int cursor_x = node_input->mutable->cursor.position_x;
+        int cursor_x = args->mutable->cursor.position_x;
         if (stor->handle_drag != -1) {                         // Was dragged
             int pixels_change = stor->handle_drag - cursor_x;  // Calculate pixel movement within handle
             float ratio = stor->display_pixels ? (float)stor->content_pixels / stor->display_pixels : 0.0f;
@@ -2867,14 +2311,14 @@ static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
             stor->current_handle_style = *style->pressed_style;
 
             stor->handle_drag = cursor_x;
-            node_input->mutable->cursor.left_down = 0;   // Consume left click
+            args->mutable->cursor.left_down = 0;   // Consume left click
         }
-        else if (node_input->hovered) {
-            int c_left_pressed = node_input->mutable->cursor.left_down;
-            int p_left_pressed = node_input->previous->cursor.left_down;
+        else if (args->hovered) {
+            int c_left_pressed = args->mutable->cursor.left_down;
+            int p_left_pressed = args->previous->cursor.left_down;
             if (!(c_left_pressed && !p_left_pressed)) return; // Avoid accidental drag, require new click inside handle    
             stor->handle_drag = cursor_x;
-            node_input->mutable->cursor.left_down = 0;   // Consume left click
+            args->mutable->cursor.left_down = 0;   // Consume left click
         }
     }
     else stor->handle_drag = -1;
@@ -2884,7 +2328,7 @@ static ARB_NODE_INPUT_FUNC_DECL(horizontal_scrollbox_handle_cursor_func) {
 static const arb_type horizontal_scrollbox_handle_type = {
     ARB_TYPE_OVERLAY_INIT,
     .transform  = horizontal_scrollbox_handle_transform_func,
-    .input      = horizontal_scrollbox_handle_cursor_func
+    .update     = horizontal_scrollbox_handle_cursor_func
 };
 
 const arb_node horizontal_scrollbox_main_body[] = {
@@ -2943,20 +2387,20 @@ typedef struct float_slider_storage {
 } float_slider_storage;
 
 #define FLOAT_SLIDER_SCROLL_SPEED 0.6f  // fraction of (max-min) per second, per unit scroll_delta
-static ARB_NODE_INPUT_FUNC_DECL(float_slider_cursor_func) {
-    const arb_float_slider_data*   dat = node_data;
+static void float_slider_cursor_func(const arb_node_update_func_arguments* args) {
+    const arb_float_slider_data*   dat = args->node_data;
     const arb_float_slider_style*  stl = dat->style;
     const arb_float_slider_target* tar = dat->target;
-    float_slider_storage*          str = storage_data;
+    float_slider_storage*          str = args->storage_data;
 
-    int pixel_pos = stl->is_vertical ? node_input->mutable->cursor.position_y : node_input->mutable->cursor.position_x;
+    int pixel_pos = stl->is_vertical ? args->mutable->cursor.position_y : args->mutable->cursor.position_x;
 
     // Scroll wheel nudges value while hovered, independent of drag/click state
-    if (!stl->is_scroll_disabled && node_input->hovered && dat->target && 
-        tar->max > tar->min && node_input->mutable->cursor.scroll_delta != 0.0f
+    if (!stl->is_scroll_disabled && args->hovered && dat->target && 
+        tar->max > tar->min && args->mutable->cursor.scroll_delta != 0.0f
     ) {
         float value_delta = 
-            node_input->mutable->cursor.scroll_delta * node_input->delta_time
+            args->mutable->cursor.scroll_delta * args->delta_time
             * FLOAT_SLIDER_SCROLL_SPEED * (tar->max - tar->min);
 
         float new_value = *tar->target + value_delta;
@@ -2964,31 +2408,31 @@ static ARB_NODE_INPUT_FUNC_DECL(float_slider_cursor_func) {
         if (new_value > tar->max) new_value = tar->max;
         *tar->target = new_value;
 
-        node_input->mutable->cursor.scroll_delta = 0.0f; // consume, don't leak to nodes underneath
+        args->mutable->cursor.scroll_delta = 0.0f; // consume, don't leak to nodes underneath
     }
 
-    int c_left_down = node_input->mutable->cursor.left_down;
-    int p_left_down = node_input->previous->cursor.left_down;
+    int c_left_down = args->mutable->cursor.left_down;
+    int p_left_down = args->previous->cursor.left_down;
 
     if (!c_left_down) {
         str->is_during_drag = 0;
-        str->current_style  = node_input->hovered ? *stl->hovered_style : *stl->default_style;
+        str->current_style  = args->hovered ? *stl->hovered_style : *stl->default_style;
         return;
     }
 
     if (!str->is_during_drag) {
-        if (!(c_left_down && !p_left_down) || !node_input->hovered) return;
+        if (!(c_left_down && !p_left_down) || !args->hovered) return;
         str->is_during_drag  = 1;
         str->last_drag_pixel = pixel_pos;
         str->current_style   = *stl->pressed_style;
-        node_input->mutable->cursor.left_down = 0;
+        args->mutable->cursor.left_down = 0;
         return;
     }
 
     str->current_style = *stl->pressed_style;
 
     if (dat->target && tar->max > tar->min) {
-        int axis_extent = stl->is_vertical ? layout->given_height : layout->given_width;
+        int axis_extent = stl->is_vertical ? args->node_state->given_height : args->node_state->given_width;
         if (axis_extent > 0) {
             int   pixel_delta  = pixel_pos - str->last_drag_pixel;
             float signed_delta = (float)(stl->is_vertical ? -pixel_delta : pixel_delta);
@@ -3002,11 +2446,11 @@ static ARB_NODE_INPUT_FUNC_DECL(float_slider_cursor_func) {
     }
 
     str->last_drag_pixel = pixel_pos;
-    node_input->mutable->cursor.left_down = 0;
+    args->mutable->cursor.left_down = 0;
 }
 
-static ARB_NODE_TRANSFORM_FUNC_DECL(float_slider_transform_func) {
-    const arb_float_slider_data*   dat = node_data;
+static void float_slider_transform_func(const arb_node_transform_func_arguments* args) {
+    const arb_float_slider_data*   dat = args->node_data;
     const arb_float_slider_style*  stl = dat->style;
     const arb_float_slider_target* tar = dat->target;
 
@@ -3019,16 +2463,16 @@ static ARB_NODE_TRANSFORM_FUNC_DECL(float_slider_transform_func) {
 
     if (stl->is_vertical) {
         // Anchor at bottom edge, fill upward with value
-        float extent    = (float)layout->given_height;
+        float extent    = (float)args->layout->given_height;
         float offset_px = (percent - 1.0f) * extent * 0.5f;
-        *transform = arb_mat3x2_scale (*transform, 1.0f, percent);
-        *transform = arb_mat3x2_offset(*transform, 0.0f, 2.0f * offset_px / (float)resolution_y);
+        *args->transform = arb_mat3x2_scale (*args->transform, 1.0f, percent);
+        *args->transform = arb_mat3x2_offset(*args->transform, 0.0f, 2.0f * offset_px / (float)args->resolution_y);
     } else {
         // Anchor at left edge, fill rightward with value
-        float extent    = (float)layout->given_width;
+        float extent    = (float)args->layout->given_width;
         float offset_px = (percent - 1.0f) * extent * 0.5f;
-        *transform = arb_mat3x2_scale (*transform, percent, 1.0f);
-        *transform = arb_mat3x2_offset(*transform, 2.0f * offset_px / (float)resolution_x, 0.0f);
+        *args->transform = arb_mat3x2_scale (*args->transform, percent, 1.0f);
+        *args->transform = arb_mat3x2_offset(*args->transform, 2.0f * offset_px / (float)args->resolution_x, 0.0f);
     }
 }
 
@@ -3065,14 +2509,14 @@ typedef struct fixed_text_box_storage {
 
 const arb_invalidation_flag fixed_text_box_invalidation_always_flag = arb_invalidation_flag_width_measure;
 
-static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
-    const arb_fixed_text_box_data*   dat = node_data;
+static void fixed_text_box_input_func(const arb_node_update_func_arguments* args) {
+    const arb_fixed_text_box_data*   dat = args->node_data;
     const arb_fixed_text_box_style*  stl = dat->style;
     const arb_fixed_text_box_target* tar = dat->target;
-    fixed_text_box_storage*          str = storage_data;
+    fixed_text_box_storage*          str = args->storage_data;
 
-    arb_cursor_state crr = node_input->mutable->cursor;
-    arb_cursor_state prv = node_input->previous->cursor;
+    arb_cursor_state crr = args->mutable->cursor;
+    arb_cursor_state prv = args->previous->cursor;
 
     // Configure read pointers
     if (str->invalidation.flag_consumable_ptr != &str->consumable_flag) {
@@ -3094,7 +2538,7 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
 
     // Detect mouse click to focus
     if (crr.left_down && !prv.left_down) {
-        str->focused = node_input->hovered;
+        str->focused = args->hovered;
     }
     str->caret_data.count = str->focused ? 1 : 0;
     if (!str->focused) return;
@@ -3106,7 +2550,7 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
     }
     
     // Make changes in text
-    char* input = (char*)node_input->mutable->typewriter.utf8_input;
+    char* input = (char*)args->mutable->typewriter.utf8_input;
     if (!input || !*input || tar->bytes == 0) return;
     str->consumable_flag = arb_invalidation_flag_text;  // Invalidate text on input
     while (*input) {
@@ -3145,7 +2589,7 @@ static ARB_NODE_INPUT_FUNC_DECL(fixed_text_box_input_func) {
         input = (char*)temp_ptr;
     }
 
-    node_input->mutable->typewriter.utf8_input = NULL;
+    args->mutable->typewriter.utf8_input = NULL;
 }
 
 const arb_node arb_fixed_text_box_structure[] = {
@@ -3162,4 +2606,4 @@ const arb_node arb_fixed_text_box_structure[] = {
     ARB_LAST
 };
 
-#endif // ARBOR_IMPL
+#endif
